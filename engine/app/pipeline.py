@@ -1,0 +1,156 @@
+"""Orchestrates VAD -> ASR (local-agreement streaming) -> segmenter -> translator
+into a transport-agnostic stream of PipelineEvents.
+
+Used identically by the WebSocket server (server.py) and the CLI harnesses
+(cli/translate_wav.py, cli/translate_mic.py): none of them know about VAD, ASR
+or translator internals, they just push PCM16 frames in and read events out.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import AsyncIterator
+
+import numpy as np
+
+from app.config import EngineConfig
+from app.logging_utils import LatencyTracker, get_logger, log_event
+from app.providers.base import AsrProvider, TranslatorProvider
+from app.segmenter import segment as segment_sentences
+from app.schema import EventType, PipelineEvent, new_turn_id
+from app.vad import SpeechEndpointer, VadEvent, VadEventType
+
+_LOGGER = get_logger()
+
+
+class Pipeline:
+    def __init__(self, cfg: EngineConfig, asr: AsrProvider, translator: TranslatorProvider) -> None:
+        self._cfg = cfg
+        self._asr = asr
+        self._translator = translator
+        self._vad = SpeechEndpointer(cfg=cfg.vad, sample_rate=cfg.audio.sample_rate_hz)
+        self._turn_id: str | None = None
+        self._seq = 0
+        self._speech_end_perf: float | None = None
+        self._tracker: LatencyTracker | None = None
+        self._latency_by_turn: dict[str, dict[str, float]] = {}
+        self._partial_index = 0
+
+    async def process_frame(self, pcm16: bytes) -> AsyncIterator[PipelineEvent]:
+        """Feed one frame of 16kHz mono PCM16 audio; yields zero or more events."""
+        for vad_event in self._vad.push(pcm16):
+            async for event in self._handle_vad_event(vad_event):
+                yield event
+
+        # While an utterance is open, opportunistically run a local-agreement
+        # partial decode (internally gated by asr.local_agreement.chunk_ms).
+        audio_so_far = self._vad.current_utterance_audio()
+        if audio_so_far is not None and self._turn_id is not None:
+            async for event in self._maybe_partial(audio_so_far):
+                yield event
+
+    async def flush(self) -> AsyncIterator[PipelineEvent]:
+        """Force-close any open utterance (WAV EOF / WS disconnect)."""
+        for vad_event in self._vad.flush():
+            async for event in self._handle_vad_event(vad_event):
+                yield event
+
+    def latency_for_turn(self, turn_id: str) -> dict[str, float] | None:
+        """Per-stage latency (ms) recorded for a completed turn, for the benchmark script."""
+        return self._latency_by_turn.get(turn_id)
+
+    async def _maybe_partial(self, audio_so_far: np.ndarray) -> AsyncIterator[PipelineEvent]:
+        # feed() itself is a near-instant no-op on most frames (it only re-decodes
+        # every chunk_ms of new audio), so we time every call but only commit a
+        # tracker entry / partial event when it actually produced a hypothesis -
+        # otherwise the per-turn latency breakdown would be swamped by gate-check
+        # no-ops (one per network frame) instead of the handful of real decodes.
+        start = time.perf_counter()
+        hyp = await self._asr.feed(audio_so_far)
+        duration_ms = (time.perf_counter() - start) * 1000
+        if hyp is None or not hyp.text:
+            return
+        self._partial_index += 1
+        if self._tracker is not None:
+            self._tracker.record(f"asr_partial[{self._partial_index}]", duration_ms)
+        yield self._event(EventType.PARTIAL, hyp.language, hyp.text, duration_ms)
+
+    async def _handle_vad_event(self, vad_event: VadEvent) -> AsyncIterator[PipelineEvent]:
+        if vad_event.type is VadEventType.SPEECH_START:
+            self._turn_id = new_turn_id()
+            self._seq = 0
+            self._partial_index = 0
+            self._tracker = LatencyTracker(turn_id=self._turn_id)
+            self._asr.start_utterance(self._turn_id)
+            log_event(_LOGGER, logging.INFO, "speech_start", turn_id=self._turn_id)
+            return
+
+        # SPEECH_END
+        assert vad_event.audio is not None
+        assert self._turn_id is not None
+        turn_id = self._turn_id
+        tracker = self._tracker
+        assert tracker is not None
+        self._speech_end_perf = time.perf_counter()
+
+        with tracker.stage("asr_final"):
+            hyp = await self._asr.finalize(vad_event.audio)
+        yield self._event(
+            EventType.FINAL,
+            hyp.language,
+            hyp.text,
+            self._elapsed_since_speech_end_ms(),
+            turn_id=turn_id,
+            is_final_segment=True,
+        )
+
+        if hyp.text:
+            source_lang = hyp.language
+            target_lang = (
+                self._cfg.translator.target_lang
+                if source_lang == self._cfg.translator.source_lang
+                else self._cfg.translator.source_lang
+            )
+            for i, sentence in enumerate(segment_sentences(hyp.text)):
+                with tracker.stage(f"translate[{i}]"):
+                    translated = await self._translator.translate(sentence, source_lang, target_lang)
+                yield self._event(
+                    EventType.TRANSLATION,
+                    target_lang,
+                    translated,
+                    self._elapsed_since_speech_end_ms(),
+                    turn_id=turn_id,
+                    is_final_segment=True,
+                )
+
+        self._latency_by_turn[turn_id] = tracker.as_dict()
+        log_event(_LOGGER, logging.INFO, "turn_complete", turn_id=turn_id, **tracker.as_dict())
+        self._turn_id = None
+        self._tracker = None
+
+    def _elapsed_since_speech_end_ms(self) -> float:
+        if self._speech_end_perf is None:
+            return 0.0
+        return (time.perf_counter() - self._speech_end_perf) * 1000
+
+    def _event(
+        self,
+        type_: EventType,
+        lang: str,
+        text: str,
+        latency_ms: float,
+        turn_id: str | None = None,
+        is_final_segment: bool = False,
+    ) -> PipelineEvent:
+        tid = turn_id or self._turn_id or "unknown"
+        self._seq += 1
+        return PipelineEvent(
+            type=type_,
+            lang=lang,
+            text=text,
+            turn_id=tid,
+            seq=self._seq,
+            latency_ms=round(latency_ms, 2),
+            is_final_segment=is_final_segment,
+        )

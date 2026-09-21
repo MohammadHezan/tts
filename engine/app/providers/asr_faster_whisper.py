@@ -1,0 +1,143 @@
+"""faster-whisper (CTranslate2) ASR provider with local-agreement streaming.
+
+Whisper only supports whole-buffer decoding, not true incremental decode. To
+stream partial captions without O(utterance^2) recompute as an utterance grows,
+we use the LocalAgreement-2 policy (Macháček et al., "Turning Whisper into
+Real-Time Transcription System"): re-decode only the still-unconfirmed audio
+tail every `chunk_ms`, and commit a word as confirmed once two consecutive
+decodes agree on it - then permanently advance past its audio using the
+word's own end timestamp, so later decodes never re-pay for it.
+
+`finalize()` re-decodes the *entire* utterance once for the authoritative
+transcript; the stitched partial hypotheses from `feed()` are for live
+captions only and are discarded once the segment ends.
+
+Hardware: on CPU, large-v3-turbo will not reliably hit the <=2s partial-caption
+budget - see README "Hardware" for the small.en/base.en + int8 fallback.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from app.audio_utils import pcm16_to_float32
+from app.config import AsrConfig
+from app.providers.base import AsrHypothesis, AsrProvider
+
+
+def _resolve_device_and_compute_type(cfg: AsrConfig) -> tuple[str, str]:
+    device = cfg.device
+    if device == "auto":
+        import ctranslate2
+
+        device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+    compute_type = cfg.compute_type
+    if compute_type == "auto":
+        compute_type = "float16" if device == "cuda" else "int8"
+    return device, compute_type
+
+
+def _common_prefix_len(prev_words: list[str], curr_words: list[str]) -> int:
+    n = 0
+    for a, b in zip(prev_words, curr_words, strict=False):
+        if a != b:
+            break
+        n += 1
+    return n
+
+
+@dataclass
+class _UtteranceSession:
+    confirmed_text: str = ""
+    confirmed_samples: int = 0
+    last_hyp_words: list[str] = field(default_factory=list)
+    last_decoded_total_samples: int = 0
+
+
+class FasterWhisperAsr(AsrProvider):
+    def __init__(self, cfg: AsrConfig, sample_rate: int = 16000) -> None:
+        from faster_whisper import WhisperModel
+
+        self._cfg = cfg
+        self._sample_rate = sample_rate
+        device, compute_type = _resolve_device_and_compute_type(cfg)
+        self._model = WhisperModel(cfg.model, device=device, compute_type=compute_type)
+        self._chunk_samples = max(1, int(cfg.local_agreement.chunk_ms * sample_rate / 1000))
+        self._session: _UtteranceSession | None = None
+        if cfg.local_agreement.agreement_window != 2:
+            import logging
+
+            logging.getLogger("tts_engine").warning(
+                "asr.local_agreement.agreement_window=%s requested, but Phase 1 only "
+                "implements LocalAgreement-2 (compares consecutive hypothesis pairs); "
+                "falling back to window=2.",
+                cfg.local_agreement.agreement_window,
+            )
+
+    def start_utterance(self, turn_id: str) -> None:
+        self._session = _UtteranceSession()
+
+    async def feed(self, utterance_audio_so_far: np.ndarray) -> AsrHypothesis | None:
+        session = self._session
+        if session is None:
+            raise RuntimeError("start_utterance() must be called before feed()")
+        if not self._cfg.local_agreement.enabled:
+            return None
+
+        total_samples = len(utterance_audio_so_far)
+        if total_samples - session.last_decoded_total_samples < self._chunk_samples:
+            return None
+        session.last_decoded_total_samples = total_samples
+
+        tail_audio = utterance_audio_so_far[session.confirmed_samples :]
+        if len(tail_audio) == 0:
+            return None
+
+        words, language = await asyncio.to_thread(self._decode_words, tail_audio)
+        word_texts = [w.word for w in words]
+        agree_len = _common_prefix_len(session.last_hyp_words, word_texts)
+
+        if agree_len > 0:
+            newly_confirmed = words[:agree_len]
+            session.confirmed_text += "".join(w.word for w in newly_confirmed)
+            session.confirmed_samples += int(newly_confirmed[-1].end * self._sample_rate)
+
+        session.last_hyp_words = word_texts[agree_len:]
+        tentative_tail = "".join(w.word for w in words[agree_len:])
+        text = (session.confirmed_text + tentative_tail).strip()
+        return AsrHypothesis(text=text, language=language, is_final=False)
+
+    async def finalize(self, full_utterance_audio: np.ndarray) -> AsrHypothesis:
+        if self._session is None:
+            raise RuntimeError("start_utterance() must be called before finalize()")
+        text, language = await asyncio.to_thread(self._decode_text, full_utterance_audio)
+        self._session = None
+        return AsrHypothesis(text=text, language=language, is_final=True)
+
+    def _decode_words(self, audio_int16: np.ndarray) -> tuple[list, str]:
+        """Word-level decode (word_timestamps=True), used for local-agreement partials."""
+        segments, info = self._model.transcribe(
+            pcm16_to_float32(audio_int16),
+            language=self._resolved_language(),
+            beam_size=self._cfg.beam_size,
+            word_timestamps=True,
+        )
+        words = [w for seg in segments for w in (seg.words or [])]
+        return words, info.language
+
+    def _decode_text(self, audio_int16: np.ndarray) -> tuple[str, str]:
+        """Plain segment-level decode, used for the authoritative final transcript."""
+        segments, info = self._model.transcribe(
+            pcm16_to_float32(audio_int16),
+            language=self._resolved_language(),
+            beam_size=self._cfg.beam_size,
+            word_timestamps=False,
+        )
+        text = "".join(seg.text for seg in segments).strip()
+        return text, info.language
+
+    def _resolved_language(self) -> str | None:
+        return None if self._cfg.language == "auto" else self._cfg.language

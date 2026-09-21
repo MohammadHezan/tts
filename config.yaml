@@ -1,0 +1,59 @@
+# Arabic <-> English real-time speech translation - shared pipeline configuration.
+#
+# Every stage (ASR / Translator / TTS) is selected here by "provider" name and
+# instantiated through engine/app/providers/base.py factories. Swap local <-> cloud
+# without touching pipeline code. No secrets live here - see .env.example.
+#
+# Phase 1 scope: EN -> AR captions only (ASR + Translator). TTS section is defined
+# for forward-compatibility but is not wired up until Phase 2.
+
+audio:
+  sample_rate_hz: 16000
+  frame_ms: 30 # capture frame size streamed over the WS, per HARD CONSTRAINTS (20-30ms)
+  channels: 1
+
+vad:
+  provider: silero
+  threshold: 0.5 # speech probability threshold (0-1)
+  min_speech_ms: 150 # ignore blips shorter than this
+  min_silence_ms: 700 # trailing silence that ends/endpoints an utterance
+  speech_pad_ms: 200 # padding kept around detected speech edges
+
+asr:
+  provider: faster_whisper
+  # Spec-recommended target model. Needs an NVIDIA GPU (~6GB VRAM, fp16) to
+  # reliably beat the <=2s partial-caption budget. See README "Hardware" section
+  # for the CPU fallback (model: small.en / base.en, compute_type: int8).
+  model: large-v3-turbo
+  device: auto # auto | cuda | cpu
+  compute_type: auto # auto -> float16 on GPU, int8 on CPU
+  language: auto # auto-detect ar/en; Phase 1 CLI pins "en" for the EN->AR demo
+  beam_size: 1 # greedy decoding for latency; raise for offline WER benchmarking
+  local_agreement:
+    enabled: true
+    chunk_ms: 500 # re-decode cadence while an utterance is still open
+    agreement_window: 2 # consecutive hypotheses that must share a prefix to confirm it
+
+translator:
+  provider: ollama # ollama (local, default) | claude (cloud)
+  source_lang: en
+  target_lang: ar
+  domain_prompt: retail_furniture
+  context_turns: 6 # wired up in Phase 2 (glossary + context memory)
+  ollama:
+    base_url: http://localhost:11434
+    model: llama3.1:8b-instruct-q4_K_M
+    timeout_s: 15
+  claude:
+    model: claude-haiku-4-5-20251001 # low-latency Claude model for turn-by-turn translation
+    timeout_s: 15
+    max_tokens: 512
+
+tts:
+  # Not implemented in Phase 1 - present so config.yaml shape is stable across phases.
+  provider: none # none | kokoro | (pluggable Arabic voice, Phase 2)
+
+logging:
+  level: INFO
+  structured: true # true = JSON lines, false = human-readable console format
+  latency_metrics: true
