@@ -1,0 +1,21 @@
+# Domain glossary: exact preferred EN<->AR translations for brand/product/retail
+# terms, injected into the translator's system prompt (see engine/app/glossary.py)
+# so the LLM stays consistent instead of inventing ad-hoc phrasing turn to turn.
+#
+# Edit freely for your own brand names, collection names, campaign hashtags, and
+# retail jargon. Each entry must have both "en" and "ar" - the translator picks
+# the right direction automatically based on the turn being translated.
+
+terms:
+  - en: "showroom"
+    ar: "صالة العرض"
+  - en: "Chesterfield sofa"
+    ar: "أريكة تشيسترفيلد"
+  - en: "Instagram Reels"
+    ar: "ريلز إنستغرام"
+  - en: "collection"
+    ar: "مجموعة"
+  - en: "invoice"
+    ar: "فاتورة"
+  - en: "shipment"
+    ar: "شحنة"

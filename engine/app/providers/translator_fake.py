@@ -11,6 +11,7 @@ class FakeTranslator(TranslatorProvider):
     def __init__(self, prefix: str = "[AR]") -> None:
         self._prefix = prefix
         self.calls: list[str] = []
+        self.contexts: list[list[TurnContext] | None] = []
 
     async def translate(
         self,
@@ -20,4 +21,5 @@ class FakeTranslator(TranslatorProvider):
         context: list[TurnContext] | None = None,
     ) -> str:
         self.calls.append(text)
+        self.contexts.append(context)
         return f"{self._prefix} {text}"

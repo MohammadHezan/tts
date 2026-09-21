@@ -12,7 +12,8 @@ import os
 
 import httpx
 
-from app.config import TranslatorConfig
+from app.config import REPO_ROOT, TranslatorConfig
+from app.glossary import Glossary
 from app.prompts import build_context_messages, build_system_prompt
 from app.providers.base import TranslatorProvider, TurnContext
 
@@ -29,6 +30,7 @@ class ClaudeTranslator(TranslatorProvider):
                 "(copy .env.example to .env and fill it in)"
             )
         self._cfg = cfg
+        self._glossary = Glossary.load(REPO_ROOT / cfg.glossary_path if cfg.glossary_path else None)
         self._client = httpx.AsyncClient(
             timeout=cfg.claude.timeout_s,
             headers={
@@ -52,7 +54,7 @@ class ClaudeTranslator(TranslatorProvider):
             _API_URL,
             json={
                 "model": self._cfg.claude.model,
-                "system": build_system_prompt(source_lang, target_lang, self._cfg.domain_prompt),
+                "system": build_system_prompt(source_lang, target_lang, self._cfg.domain_prompt, self._glossary),
                 "messages": messages,
                 "max_tokens": self._cfg.claude.max_tokens,
                 "temperature": 0.2,

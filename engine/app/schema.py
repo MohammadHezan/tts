@@ -17,7 +17,7 @@ class EventType(str, Enum):
     PARTIAL = "partial"  # streaming ASR hypothesis for the open turn, not yet stable
     FINAL = "final"  # endpointed ASR transcript for a completed segment/turn
     TRANSLATION = "translation"  # translated text for a (segment of a) turn
-    AUDIO = "audio"  # synthesized audio chunk (wired up in Phase 2)
+    AUDIO = "audio"  # synthesized speech for one translated sentence
     ERROR = "error"  # pipeline/provider error surfaced to the client
 
 
@@ -45,6 +45,7 @@ class PipelineEvent(BaseModel):
     seq: int = Field(default=0, description="Monotonic event index within the turn")
     latency_ms: float | None = None
     is_final_segment: bool = False
-    audio: bytes | None = Field(default=None, description="PCM16 audio, Phase 2+")
+    audio: bytes | None = Field(default=None, description="PCM16 mono audio, set on AUDIO events")
+    audio_sample_rate: int | None = Field(default=None, description="Sample rate of `audio`, Hz")
     timestamp: float = Field(default_factory=time.time)
     error: str | None = None

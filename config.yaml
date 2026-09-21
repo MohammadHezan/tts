@@ -4,8 +4,10 @@
 # instantiated through engine/app/providers/base.py factories. Swap local <-> cloud
 # without touching pipeline code. No secrets live here - see .env.example.
 #
-# Phase 1 scope: EN -> AR captions only (ASR + Translator). TTS section is defined
-# for forward-compatibility but is not wired up until Phase 2.
+# Phase 2: bidirectional EN<->AR (ASR auto-detects the spoken language; the
+# translator/TTS direction follows automatically) with audio output, glossary,
+# and multi-turn context memory. See README "Setup" for the model downloads
+# tts.* needs (not bundled - same story as asr.model in Phase 1).
 
 audio:
   sample_rate_hz: 16000
@@ -27,7 +29,7 @@ asr:
   model: large-v3-turbo
   device: auto # auto | cuda | cpu
   compute_type: auto # auto -> float16 on GPU, int8 on CPU
-  language: auto # auto-detect ar/en; Phase 1 CLI pins "en" for the EN->AR demo
+  language: auto # auto-detect ar/en - this is what makes the pipeline bidirectional
   beam_size: 1 # greedy decoding for latency; raise for offline WER benchmarking
   local_agreement:
     enabled: true
@@ -36,10 +38,13 @@ asr:
 
 translator:
   provider: ollama # ollama (local, default) | claude (cloud)
+  # The two languages in play; Pipeline picks translation direction per turn
+  # from whichever one ASR did NOT detect as the source (see app/pipeline.py).
   source_lang: en
   target_lang: ar
   domain_prompt: retail_furniture
-  context_turns: 6 # wired up in Phase 2 (glossary + context memory)
+  context_turns: 6 # rolling window of prior turns fed back to the LLM for consistency
+  glossary_path: glossary.yaml # repo-root-relative; null disables
   ollama:
     base_url: http://localhost:11434
     model: llama3.1:8b-instruct-q4_K_M
@@ -50,8 +55,18 @@ translator:
     max_tokens: 512
 
 tts:
-  # Not implemented in Phase 1 - present so config.yaml shape is stable across phases.
-  provider: none # none | kokoro | (pluggable Arabic voice, Phase 2)
+  # "none" ships safe-by-default (no model downloads required to run captions-only).
+  # Set to "multi_voice" once you've downloaded the Kokoro + Piper weights below.
+  provider: none # none | multi_voice | fake
+  sample_rate_hz: 24000 # informational - AUDIO events carry their own actual sample rate
+  kokoro: # English voice - Apache-2.0, via kokoro-onnx (no torch)
+    model_path: models/kokoro-v1.0.onnx # https://github.com/thewh1teagle/kokoro-onnx/releases
+    voices_path: models/voices-v1.0.bin
+    voice: af_heart
+    lang: en-us # no built-in Australian English voice; en-us/en-gb are closest
+  piper: # Arabic voice - GPL-3.0-or-later, see README "Licensing"
+    model_path: models/ar_JO-kareem-medium.onnx # https://huggingface.co/rhasspy/piper-voices - pick any ar_* voice
+    config_path: null # defaults to "<model_path>.json" if null
 
 logging:
   level: INFO

@@ -17,7 +17,9 @@ from app.audio_utils import iter_frames, load_wav_as_pcm16_mono
 from app.config import AsrConfig, EngineConfig, TranslatorConfig
 from app.pipeline import Pipeline
 from app.providers.asr_fake import FakeAsr
+from app.providers.base import TtsProvider
 from app.providers.translator_fake import FakeTranslator
+from app.providers.tts_fake import FakeTts
 from app.schema import EventType, PipelineEvent
 
 
@@ -27,9 +29,14 @@ def engine_cfg() -> EngineConfig:
 
 
 async def _run_wav_through_pipeline(
-    cfg: EngineConfig, asr: FakeAsr, translator: FakeTranslator, wav_path: Path
+    cfg: EngineConfig,
+    asr: FakeAsr,
+    translator: FakeTranslator,
+    wav_path: Path,
+    tts: TtsProvider | None = None,
+    pipeline: Pipeline | None = None,
 ) -> tuple[Pipeline, list[PipelineEvent]]:
-    pipeline = Pipeline(cfg, asr, translator)
+    pipeline = pipeline or Pipeline(cfg, asr, translator, tts)
     events: list[PipelineEvent] = []
     pcm = load_wav_as_pcm16_mono(wav_path, target_sample_rate=cfg.audio.sample_rate_hz)
     for frame in iter_frames(pcm, cfg.audio.frame_samples):
@@ -121,3 +128,80 @@ async def test_final_latency_is_measured_from_speech_end(
     assert translation_event.latency_ms is not None
     # translation happens after the final transcript, so it should never be faster
     assert translation_event.latency_ms >= final_event.latency_ms
+
+
+async def test_tts_emits_audio_event_after_each_translation(
+    engine_cfg: EngineConfig, synthesized_wav: Callable[[str], Path]
+) -> None:
+    text = "The delivery is confirmed for Friday."
+    wav_path = synthesized_wav(text)
+    asr = FakeAsr(final_text=text)
+    translator = FakeTranslator()
+    tts = FakeTts()
+
+    _, events = await _run_wav_through_pipeline(engine_cfg, asr, translator, wav_path, tts=tts)
+
+    translation_events = [e for e in events if e.type is EventType.TRANSLATION]
+    audio_events = [e for e in events if e.type is EventType.AUDIO]
+    assert len(audio_events) == len(translation_events) > 0
+
+    for translation_event, audio_event in zip(translation_events, audio_events, strict=True):
+        assert audio_event.turn_id == translation_event.turn_id
+        assert audio_event.lang == translation_event.lang
+        assert audio_event.text == translation_event.text
+        assert audio_event.audio  # non-empty PCM16 bytes
+        assert audio_event.audio_sample_rate == 16000
+        # TTS runs after translation within the same sentence, so it can only be equal or later
+        assert audio_event.latency_ms >= translation_event.latency_ms
+
+
+async def test_no_audio_events_when_tts_is_none(
+    engine_cfg: EngineConfig, synthesized_wav: Callable[[str], Path]
+) -> None:
+    text = "No audio should be produced here."
+    wav_path = synthesized_wav(text)
+    asr = FakeAsr(final_text=text)
+    translator = FakeTranslator()
+
+    _, events = await _run_wav_through_pipeline(engine_cfg, asr, translator, wav_path, tts=None)
+    assert not any(e.type is EventType.AUDIO for e in events)
+
+
+async def test_context_memory_accumulates_across_turns(
+    engine_cfg: EngineConfig, synthesized_wav: Callable[[str], Path]
+) -> None:
+    translator = FakeTranslator()
+    pipeline = Pipeline(engine_cfg, FakeAsr(final_text="First sentence here."), translator)
+
+    wav_1 = synthesized_wav("First sentence here.")
+    await _run_wav_through_pipeline(engine_cfg, None, None, wav_1, pipeline=pipeline)  # type: ignore[arg-type]
+    assert translator.contexts[-1] == []  # no prior turns yet
+
+    pipeline._asr = FakeAsr(final_text="Second sentence here.")  # noqa: SLF001 - swap ASR text for turn 2
+    wav_2 = synthesized_wav("Second sentence here.")
+    await _run_wav_through_pipeline(engine_cfg, None, None, wav_2, pipeline=pipeline)  # type: ignore[arg-type]
+
+    second_call_context = translator.contexts[-1]
+    assert second_call_context is not None
+    assert len(second_call_context) == 1
+    assert second_call_context[0].source_text == "First sentence here."
+    assert second_call_context[0].translated_text == "[AR] First sentence here."
+
+
+async def test_ar_to_en_direction_resolves_correctly(
+    engine_cfg: EngineConfig, synthesized_wav: Callable[[str], Path]
+) -> None:
+    # engine_cfg's translator pair is source_lang=en/target_lang=ar (the default);
+    # when ASR detects Arabic instead, Pipeline should translate ar -> en.
+    text = "مرحبا بكم في صالة العرض"
+    wav_path = synthesized_wav("Hello there")  # audio content is irrelevant with FakeAsr
+    asr = FakeAsr(final_text=text, language="ar")
+    translator = FakeTranslator()
+
+    _, events = await _run_wav_through_pipeline(engine_cfg, asr, translator, wav_path)
+
+    final_event = next(e for e in events if e.type is EventType.FINAL)
+    translation_event = next(e for e in events if e.type is EventType.TRANSLATION)
+    assert final_event.lang == "ar"
+    assert translation_event.lang == "en"
+    assert translator.calls[-1] == text

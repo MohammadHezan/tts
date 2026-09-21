@@ -4,14 +4,16 @@ Usage (run from the engine/ directory):
     python -m bench.benchmark                       # auto-generated espeak-ng smoke set
     python -m bench.benchmark --manifest my.json     # your own recorded audio + references
     python -m bench.benchmark --dry-run              # fake providers; validates the harness only
+    python -m bench.benchmark --with-audio           # also synthesize + budget-check TTS latency
 
 --manifest expects a JSON file: [{"wav": "relative/or/absolute/path.wav", "reference": "text"}, ...]
 
 Prints, per pipeline stage, mean/median/p95 latency in ms aggregated across all
 samples; each sample's "first translated caption" latency (VAD speech_end ->
-first TRANSLATION event) against the <=2s budget from the spec; and the
-overall WER (word error rate, via jiwer) of the final ASR transcripts against
-the reference texts.
+first TRANSLATION event) against the <=2s budget from the spec; with
+--with-audio, the "first translated audio" latency against the <=3.5s budget;
+and the overall WER (word error rate, via jiwer) of the final ASR transcripts
+against the reference texts.
 """
 
 from __future__ import annotations
@@ -27,11 +29,12 @@ from app.audio_utils import iter_frames, load_wav_as_pcm16_mono
 from app.config import EngineConfig, load_config
 from app.logging_utils import configure_logging
 from app.pipeline import Pipeline
-from app.providers.base import build_asr_provider, build_translator_provider
+from app.providers.base import build_asr_provider, build_translator_provider, build_tts_provider
 from app.schema import EventType, PipelineEvent
 from bench.samples import BenchmarkSample, build_default_manifest, load_manifest
 
 CAPTION_BUDGET_MS = 2000.0
+AUDIO_BUDGET_MS = 3500.0
 
 
 async def run_sample(pipeline: Pipeline, cfg: EngineConfig, sample: BenchmarkSample) -> dict:
@@ -40,15 +43,18 @@ async def run_sample(pipeline: Pipeline, cfg: EngineConfig, sample: BenchmarkSam
 
     final_text = ""
     first_caption_latency_ms: float | None = None
+    first_audio_latency_ms: float | None = None
     last_turn_id: str | None = None
 
     def observe(event: PipelineEvent) -> None:
-        nonlocal final_text, first_caption_latency_ms, last_turn_id
+        nonlocal final_text, first_caption_latency_ms, first_audio_latency_ms, last_turn_id
         if event.type is EventType.FINAL:
             final_text = event.text
             last_turn_id = event.turn_id
         elif event.type is EventType.TRANSLATION and first_caption_latency_ms is None:
             first_caption_latency_ms = event.latency_ms
+        elif event.type is EventType.AUDIO and first_audio_latency_ms is None:
+            first_audio_latency_ms = event.latency_ms
 
     for frame in iter_frames(pcm, frame_samples):
         async for event in pipeline.process_frame(frame.tobytes()):
@@ -61,6 +67,7 @@ async def run_sample(pipeline: Pipeline, cfg: EngineConfig, sample: BenchmarkSam
         "reference": sample.reference,
         "hypothesis": final_text,
         "first_caption_latency_ms": first_caption_latency_ms,
+        "first_audio_latency_ms": first_audio_latency_ms,
         "stage_latencies": stage_latencies,
     }
 
@@ -84,6 +91,10 @@ async def main_async(args: argparse.Namespace) -> None:
     if args.dry_run:
         cfg.asr.provider = "fake"
         cfg.translator.provider = "fake"
+        if cfg.tts.provider != "none":
+            cfg.tts.provider = "fake"
+    if args.with_audio and cfg.tts.provider == "none":
+        cfg.tts.provider = "fake" if args.dry_run else "multi_voice"
     configure_logging(cfg.logging)
 
     manifest = load_manifest(Path(args.manifest)) if args.manifest else build_default_manifest()
@@ -98,10 +109,11 @@ async def main_async(args: argparse.Namespace) -> None:
 
     asr = build_asr_provider(cfg.asr)
     translator = build_translator_provider(cfg.translator)
+    tts = build_tts_provider(cfg.tts)
 
     results = []
     for sample in manifest:
-        pipeline = Pipeline(cfg, asr, translator)  # fresh VAD/turn state per sample
+        pipeline = Pipeline(cfg, asr, translator, tts)  # fresh VAD/turn state per sample
         result = await run_sample(pipeline, cfg, sample)
         results.append(result)
         status = "OK" if result["hypothesis"] else "EMPTY"
@@ -134,13 +146,25 @@ async def main_async(args: argparse.Namespace) -> None:
     else:
         print("  no samples produced a translated caption")
 
+    if cfg.tts.provider != "none":
+        print("\n=== First translated audio latency (VAD speech_end -> first spoken audio) ===")
+        audio_latencies = [r["first_audio_latency_ms"] for r in results if r["first_audio_latency_ms"] is not None]
+        if audio_latencies:
+            mean_latency = statistics.mean(audio_latencies)
+            p95_latency = _percentile(audio_latencies, 95)
+            verdict = "PASS" if p95_latency <= AUDIO_BUDGET_MS else "FAIL"
+            print(f"  mean={mean_latency:.1f}ms  p95={p95_latency:.1f}ms  budget={AUDIO_BUDGET_MS:.0f}ms  [{verdict}]")
+        else:
+            print("  no samples produced translated audio")
+
     print(f"\n=== WER (final ASR transcript vs. reference) ===\n  {overall_wer:.3f}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", help='JSON file: [{"wav": "path", "reference": "text"}, ...]')
-    parser.add_argument("--dry-run", action="store_true", help="Use fake ASR/translator providers (validates the harness only)")
+    parser.add_argument("--dry-run", action="store_true", help="Use fake ASR/translator/TTS providers (validates the harness only)")
+    parser.add_argument("--with-audio", action="store_true", help="Also synthesize speech and budget-check first-audio latency")
     args = parser.parse_args()
     asyncio.run(main_async(args))
 

@@ -1,22 +1,27 @@
 """Orchestrates VAD -> ASR (local-agreement streaming) -> segmenter -> translator
-into a transport-agnostic stream of PipelineEvents.
+-> TTS into a transport-agnostic stream of PipelineEvents. Bidirectional: ASR
+auto-detects the spoken language and translation/TTS direction follows
+automatically (see the source_lang/target_lang resolution below). A rolling
+window of prior turns (config.translator.context_turns) is fed back to the
+translator for cross-turn consistency.
 
 Used identically by the WebSocket server (server.py) and the CLI harnesses
-(cli/translate_wav.py, cli/translate_mic.py): none of them know about VAD, ASR
-or translator internals, they just push PCM16 frames in and read events out.
+(cli/translate_wav.py, cli/translate_mic.py): none of them know about VAD, ASR,
+translator or TTS internals, they just push PCM16 frames in and read events out.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 
 import numpy as np
 
 from app.config import EngineConfig
 from app.logging_utils import LatencyTracker, get_logger, log_event
-from app.providers.base import AsrProvider, TranslatorProvider
+from app.providers.base import AsrProvider, TranslatorProvider, TtsProvider, TurnContext
 from app.segmenter import segment as segment_sentences
 from app.schema import EventType, PipelineEvent, new_turn_id
 from app.vad import SpeechEndpointer, VadEvent, VadEventType
@@ -25,10 +30,17 @@ _LOGGER = get_logger()
 
 
 class Pipeline:
-    def __init__(self, cfg: EngineConfig, asr: AsrProvider, translator: TranslatorProvider) -> None:
+    def __init__(
+        self,
+        cfg: EngineConfig,
+        asr: AsrProvider,
+        translator: TranslatorProvider,
+        tts: TtsProvider | None = None,
+    ) -> None:
         self._cfg = cfg
         self._asr = asr
         self._translator = translator
+        self._tts = tts
         self._vad = SpeechEndpointer(cfg=cfg.vad, sample_rate=cfg.audio.sample_rate_hz)
         self._turn_id: str | None = None
         self._seq = 0
@@ -36,6 +48,9 @@ class Pipeline:
         self._tracker: LatencyTracker | None = None
         self._latency_by_turn: dict[str, dict[str, float]] = {}
         self._partial_index = 0
+        # Rolling context window of prior turns, fed back to the translator for
+        # consistency (pronoun resolution, terminology) across the conversation.
+        self._context: deque[TurnContext] = deque(maxlen=max(0, cfg.translator.context_turns))
 
     async def process_frame(self, pcm16: bytes) -> AsyncIterator[PipelineEvent]:
         """Feed one frame of 16kHz mono PCM16 audio; yields zero or more events."""
@@ -112,9 +127,12 @@ class Pipeline:
                 if source_lang == self._cfg.translator.source_lang
                 else self._cfg.translator.source_lang
             )
+            translated_sentences: list[str] = []
+            context = list(self._context)
             for i, sentence in enumerate(segment_sentences(hyp.text)):
                 with tracker.stage(f"translate[{i}]"):
-                    translated = await self._translator.translate(sentence, source_lang, target_lang)
+                    translated = await self._translator.translate(sentence, source_lang, target_lang, context=context)
+                translated_sentences.append(translated)
                 yield self._event(
                     EventType.TRANSLATION,
                     target_lang,
@@ -123,6 +141,23 @@ class Pipeline:
                     turn_id=turn_id,
                     is_final_segment=True,
                 )
+
+                if self._tts is not None:
+                    with tracker.stage(f"tts[{i}]"):
+                        audio = await self._tts.synthesize(translated, target_lang)
+                    yield self._event(
+                        EventType.AUDIO,
+                        target_lang,
+                        translated,
+                        self._elapsed_since_speech_end_ms(),
+                        turn_id=turn_id,
+                        is_final_segment=True,
+                        audio=audio.pcm16,
+                        audio_sample_rate=audio.sample_rate,
+                    )
+
+            if translated_sentences:
+                self._context.append(TurnContext(source_text=hyp.text, translated_text=" ".join(translated_sentences)))
 
         self._latency_by_turn[turn_id] = tracker.as_dict()
         log_event(_LOGGER, logging.INFO, "turn_complete", turn_id=turn_id, **tracker.as_dict())
@@ -142,6 +177,8 @@ class Pipeline:
         latency_ms: float,
         turn_id: str | None = None,
         is_final_segment: bool = False,
+        audio: bytes | None = None,
+        audio_sample_rate: int | None = None,
     ) -> PipelineEvent:
         tid = turn_id or self._turn_id or "unknown"
         self._seq += 1
@@ -153,4 +190,6 @@ class Pipeline:
             seq=self._seq,
             latency_ms=round(latency_ms, 2),
             is_final_segment=is_final_segment,
+            audio=audio,
+            audio_sample_rate=audio_sample_rate,
         )

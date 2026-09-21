@@ -75,12 +75,29 @@ class TranslatorConfig(BaseModel):
     target_lang: str = "ar"
     domain_prompt: str = "retail_furniture"
     context_turns: int = 6
+    glossary_path: str | None = "glossary.yaml"  # relative to repo root; null disables
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
 
 
+class KokoroTtsConfig(BaseModel):
+    model_path: str = "models/kokoro-v1.0.onnx"
+    voices_path: str = "models/voices-v1.0.bin"
+    voice: str = "af_heart"
+    lang: str = "en-us"  # Kokoro has no built-in Australian English voice; en-us/en-gb are closest
+
+
+class PiperTtsConfig(BaseModel):
+    # piper-tts is GPL-3.0-or-later (not Apache/MIT) - see README "Licensing".
+    model_path: str = "models/ar_JO-kareem-medium.onnx"
+    config_path: str | None = None  # defaults to "<model_path>.json" if null
+
+
 class TtsConfig(BaseModel):
-    provider: Literal["none", "kokoro"] = "none"
+    provider: Literal["none", "multi_voice", "fake"] = "none"
+    sample_rate_hz: int = 24000
+    kokoro: KokoroTtsConfig = Field(default_factory=KokoroTtsConfig)
+    piper: PiperTtsConfig = Field(default_factory=PiperTtsConfig)
 
 
 class LoggingConfig(BaseModel):

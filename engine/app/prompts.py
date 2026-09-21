@@ -7,6 +7,7 @@ the translator backend is Ollama (local) or Claude (cloud).
 
 from __future__ import annotations
 
+from app.glossary import Glossary
 from app.providers.base import TurnContext
 
 _LANG_NAMES = {"en": "English", "ar": "Arabic"}
@@ -22,16 +23,21 @@ _DOMAIN_PROMPTS = {
 }
 
 
-def build_system_prompt(source_lang: str, target_lang: str, domain_prompt: str) -> str:
+def build_system_prompt(
+    source_lang: str,
+    target_lang: str,
+    domain_prompt: str,
+    glossary: Glossary | None = None,
+) -> str:
     src = _LANG_NAMES.get(source_lang, source_lang)
     tgt = _LANG_NAMES.get(target_lang, target_lang)
     domain = _DOMAIN_PROMPTS.get(domain_prompt, _DOMAIN_PROMPTS["retail_furniture"])
     target_register = (
         "clear Modern Standard Arabic suitable for a business setting"
         if target_lang == "ar"
-        else "natural business English"
+        else "natural business English with an Australian register"
     )
-    return (
+    prompt = (
         f"{domain}\n\n"
         f"Translate the given {src} text into {tgt} ({target_register}).\n"
         "Rules:\n"
@@ -41,14 +47,15 @@ def build_system_prompt(source_lang: str, target_lang: str, domain_prompt: str) 
         "convert units or currencies.\n"
         "- Keep the tone professional and concise, matching spoken business dialogue."
     )
+    glossary_block = glossary.format_for_prompt(source_lang, target_lang) if glossary else ""
+    if glossary_block:
+        prompt += f"\n\n{glossary_block}"
+    return prompt
 
 
 def build_context_messages(context: list[TurnContext] | None) -> list[dict[str, str]]:
-    """Render prior turns as alternating user/assistant messages for LLM context.
-
-    Full context-window wiring (config.translator.context_turns) and glossary
-    injection land in Phase 2; the shape here is stable so callers can start
-    threading turn history through without a later provider API change.
+    """Render prior turns (Pipeline's rolling context_turns window) as alternating
+    user/assistant messages for LLM context.
     """
     if not context:
         return []

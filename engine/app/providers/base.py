@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.config import AsrConfig, TranslatorConfig
+from app.config import AsrConfig, TranslatorConfig, TtsConfig
 
 
 @dataclass
@@ -63,13 +63,21 @@ class TranslatorProvider(ABC):
     ) -> str: ...
 
 
+@dataclass
+class TtsAudio:
+    pcm16: bytes
+    sample_rate: int
+
+
 class TtsProvider(ABC):
-    """Defined for forward-compatibility with config.yaml's `tts:` section; no
-    concrete implementation ships until Phase 2 (Kokoro + a pluggable Arabic voice).
+    """Synthesizes one sentence of text into speech. Called once per translated
+    sentence (the same granularity as the translator), immediately after its
+    TRANSLATION event, so audio starts streaming without waiting for the whole
+    utterance's translation to finish.
     """
 
     @abstractmethod
-    async def synthesize(self, text: str, lang: str) -> bytes: ...
+    async def synthesize(self, text: str, lang: str) -> TtsAudio: ...
 
 
 def build_asr_provider(cfg: AsrConfig) -> AsrProvider:
@@ -98,3 +106,20 @@ def build_translator_provider(cfg: TranslatorConfig) -> TranslatorProvider:
 
         return FakeTranslator()
     raise ValueError(f"Unknown translator provider: {cfg.provider!r}")
+
+
+def build_tts_provider(cfg: TtsConfig) -> TtsProvider | None:
+    """Returns None for provider="none" (text captions only, no audio) - Pipeline
+    treats that as "skip TTS" rather than needing a null-object implementation.
+    """
+    if cfg.provider == "none":
+        return None
+    if cfg.provider == "multi_voice":
+        from app.providers.tts_multi import MultiVoiceTts
+
+        return MultiVoiceTts(cfg)
+    if cfg.provider == "fake":
+        from app.providers.tts_fake import FakeTts
+
+        return FakeTts()
+    raise ValueError(f"Unknown TTS provider: {cfg.provider!r}")

@@ -3,6 +3,8 @@
     ws://host:port/ws  - binary WS messages are 16kHz mono PCM16 frames
                           (20-30ms each); the server streams back one JSON
                           text message per PipelineEvent (see app/schema.py).
+                          When tts.provider != "none", AUDIO events carry
+                          base64 PCM16 in `audio` + `audio_sample_rate`.
 
 Run with (from the engine/ directory):
     uvicorn app.server:app --host 0.0.0.0 --port 8000
@@ -21,12 +23,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from app.config import load_config
 from app.logging_utils import configure_logging, get_logger, log_event
 from app.pipeline import Pipeline
-from app.providers.base import build_asr_provider, build_translator_provider
+from app.providers.base import build_asr_provider, build_translator_provider, build_tts_provider
 
 _cfg = load_config()
 _logger = configure_logging(_cfg.logging)
 _asr = build_asr_provider(_cfg.asr)
 _translator = build_translator_provider(_cfg.translator)
+_tts = build_tts_provider(_cfg.tts)  # None when tts.provider: none - captions only
 
 app = FastAPI(title="Arabic<->English Speech Translation Engine")
 
@@ -39,7 +42,7 @@ async def healthz() -> dict[str, str]:
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
-    pipeline = Pipeline(_cfg, _asr, _translator)
+    pipeline = Pipeline(_cfg, _asr, _translator, _tts)
     log_event(_logger, logging.INFO, "ws_connected")
     try:
         while True:

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import httpx
 
-from app.config import TranslatorConfig
+from app.config import REPO_ROOT, TranslatorConfig
+from app.glossary import Glossary
 from app.prompts import build_context_messages, build_system_prompt
 from app.providers.base import TranslatorProvider, TurnContext
 
@@ -16,6 +17,7 @@ from app.providers.base import TranslatorProvider, TurnContext
 class OllamaTranslator(TranslatorProvider):
     def __init__(self, cfg: TranslatorConfig) -> None:
         self._cfg = cfg
+        self._glossary = Glossary.load(REPO_ROOT / cfg.glossary_path if cfg.glossary_path else None)
         self._client = httpx.AsyncClient(base_url=cfg.ollama.base_url, timeout=cfg.ollama.timeout_s)
 
     async def translate(
@@ -25,7 +27,8 @@ class OllamaTranslator(TranslatorProvider):
         target_lang: str,
         context: list[TurnContext] | None = None,
     ) -> str:
-        messages = [{"role": "system", "content": build_system_prompt(source_lang, target_lang, self._cfg.domain_prompt)}]
+        system_prompt = build_system_prompt(source_lang, target_lang, self._cfg.domain_prompt, self._glossary)
+        messages = [{"role": "system", "content": system_prompt}]
         messages.extend(build_context_messages(context))
         messages.append({"role": "user", "content": text})
 
