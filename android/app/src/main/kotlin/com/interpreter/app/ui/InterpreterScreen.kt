@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -40,6 +41,7 @@ import com.interpreter.core.Turn
  * Flex mode, cover screen) are a later phase - this must work on a normal
  * phone screen first.
  */
+@OptIn(ExperimentalMaterial3Api::class) // TopAppBar
 @Composable
 fun InterpreterScreen(
     conversationState: ConversationState,
