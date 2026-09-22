@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Interpreter</string>
+    <string name="notification_channel_name">Interpreter session</string>
+    <string name="notification_idle">Ready</string>
+    <string name="notification_listening">Listening…</string>
+
+    <string name="engine_url_label">Engine address</string>
+    <string name="engine_url_placeholder">ws://192.168.1.42:8000/ws</string>
+    <string name="start_button">Start</string>
+    <string name="stop_button">Stop</string>
+    <string name="status_disconnected">Not connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected — speak now</string>
+    <string name="status_error">Connection error</string>
+    <string name="permission_rationale">Microphone and Bluetooth access are required to listen and speak translations through your earbuds.</string>
+</resources>
