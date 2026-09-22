@@ -95,7 +95,12 @@ class InterpreterForegroundService : Service() {
             onEvent = { event ->
                 _conversationState.value = _conversationState.value.reduce(event)
                 if (event.type == EventType.AUDIO && !event.audio.isNullOrEmpty()) {
-                    val pcm16 = Base64.decode(event.audio, Base64.DEFAULT)
+                    // The engine (pydantic's ser_json_bytes="base64") encodes with the
+                    // URL-safe alphabet (- and _ instead of + and /) - Base64.DEFAULT
+                    // expects the standard alphabet and silently produces garbage on
+                    // this input, so this must be URL_SAFE (caught by the web client's
+                    // Playwright test hitting the same bug - see web/README notes).
+                    val pcm16 = Base64.decode(event.audio, Base64.URL_SAFE)
                     audioPlayback.enqueue(pcm16, event.audioSampleRate ?: 16000)
                 }
                 updateNotification(getString(R.string.notification_listening))

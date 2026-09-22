@@ -1,0 +1,4 @@
+# Optional - only needed for scripts/verify_web_client.py (real-browser
+# end-to-end check of the web client). Not required to run the engine.
+-r requirements.txt
+playwright>=1.47,<2.0

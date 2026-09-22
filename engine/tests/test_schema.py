@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 
 from app.schema import EventType, PipelineEvent, new_turn_id
@@ -34,6 +35,22 @@ def test_audio_bytes_serialize_as_base64() -> None:
     event = PipelineEvent(type=EventType.AUDIO, lang="ar", text="", turn_id="abc123", audio=b"\x00\x01\x02")
     payload = json.loads(event.model_dump_json())
     assert payload["audio"] == "AAEC"
+
+
+def test_audio_bytes_use_url_safe_base64_alphabet() -> None:
+    # Regression guard: pydantic's ser_json_bytes="base64" uses the URL-safe
+    # alphabet (- and _ instead of + and /), NOT the standard one. JS's
+    # atob() and Android's Base64.DEFAULT both assume standard base64 and
+    # silently mis-decode this - every client must explicitly URL-safe-decode
+    # (see app/static/app.js's base64ToInt16Array and the Android service's
+    # Base64.URL_SAFE flag, both fixed after a live Playwright test caught
+    # exactly this playing back real audio).
+    payload_bytes = bytes(range(0, 64))  # guaranteed to include a 0x3e/0x3f-triggering byte pattern
+    event = PipelineEvent(type=EventType.AUDIO, lang="ar", text="", turn_id="abc123", audio=payload_bytes)
+    payload = json.loads(event.model_dump_json())
+    assert "+" not in payload["audio"]
+    assert "/" not in payload["audio"]
+    assert base64.urlsafe_b64decode(payload["audio"]) == payload_bytes
 
 
 def test_defaults() -> None:

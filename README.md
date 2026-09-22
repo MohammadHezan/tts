@@ -1,13 +1,15 @@
 # Arabic ↔ English Real-Time Speech Translation
 
 Galaxy AI "Interpreter"-style live speech translation. Delivered in phases;
-**Phases 1+2 (engine) and the Android app are done**: a bidirectional (EN↔AR)
-engine with streaming captions *and* spoken audio output, a CLI test harness
-(WAV + live mic, with a working listen→translate→speak loop), a
-latency/WER/audio-budget benchmark, and a Kotlin/Compose Android client with
-LE Audio routing for the Buds 3 Pro. iOS, foldable UX, and desktop meeting
-mode are **not** in this delivery - see [Status](#status) and
-[Native apps](#native-apps).
+**Phases 1+2 (engine), a web client, and an Android app are done**: a
+bidirectional (EN↔AR) engine with streaming captions *and* spoken audio
+output, a CLI test harness (WAV + live mic, with a working
+listen→translate→speak loop), a latency/WER/audio-budget benchmark, a
+zero-install **browser client that runs on literally any device** (Windows,
+Mac, Linux, iPhone, Android - see [Web client](#web-client-any-device-any-platform)),
+and a Kotlin/Compose Android client with LE Audio routing for the Buds 3 Pro.
+Native iOS, foldable UX, and desktop meeting mode are **not** in this
+delivery - see [Status](#status) and [Native apps](#native-apps).
 
 ## Project tree
 
@@ -41,6 +43,12 @@ tts/
 │   │       ├── tts_piper.py             # Arabic voice (GPL-3.0 - see Licensing)
 │   │       ├── tts_multi.py             # routes by language: Kokoro EN / Piper AR
 │   │       └── tts_fake.py              # deterministic fake for tests/dry-run
+│   ├── static/                  # web client - served by server.py at http://host:port/
+│   │   ├── index.html / style.css
+│   │   ├── app.js               # WebSocket + getUserMedia + AudioContext playback
+│   │   └── pcm-worklet.js       # AudioWorklet: resamples mic input to 16kHz PCM16
+│   ├── scripts/
+│   │   └── verify_web_client.py # real-browser (Playwright) end-to-end check
 │   ├── cli/
 │   │   ├── translate_wav.py    # python -m cli.translate_wav --file audio.wav
 │   │   ├── translate_mic.py    # python -m cli.translate_mic  (live bidirectional loop)
@@ -50,7 +58,7 @@ tts/
 │   │   ├── benchmark.py        # python -m bench.benchmark
 │   │   └── samples.py          # auto-generates an espeak-ng smoke sample set
 │   └── tests/                  # pytest: VAD, segmenter, schema, glossary, integration
-├── android/                  # Kotlin/Compose client - see android/README.md
+├── android/                  # Kotlin/Compose native client - see android/README.md
 │   ├── core/                   # pure Kotlin, built+tested here (./gradlew :core:test)
 │   └── app/                    # the Android app - needs Android Studio to build
 └── README.md
@@ -158,8 +166,8 @@ usable as a last-resort robotic-voice fallback).
 
 All commands run from `engine/`.
 
-**WebSocket server** (`ws://host:port/ws`, PCM16 mono 16kHz frames in, JSON
-`PipelineEvent`s out incl. base64 `audio` when TTS is enabled - see `app/schema.py`):
+**WebSocket server + web client** (`ws://host:port/ws` for the API, `http://host:port/`
+for a ready-to-use browser UI - see [Web client](#web-client-any-device-any-platform)):
 ```bash
 uvicorn app.server:app --host 0.0.0.0 --port 8000
 ```
@@ -201,6 +209,53 @@ python -m bench.benchmark --dry-run            # validates the harness only
 ```bash
 pytest -q
 ```
+
+## Web client (any device, any platform)
+
+**This is the direct answer to "make it work on both my device and the
+Australian person's device"**: `uvicorn app.server:app` serves a browser UI
+at `http://host:port/` alongside the WebSocket API - no app install, no
+platform-specific build. Open it in Chrome/Edge/Firefox on Windows/Mac/Linux,
+or Safari/Chrome on iPhone/Android, and it works. One person runs the engine
+(on the i7+RTX 3060 machine); everyone else just opens a URL.
+
+How it works (`app/static/`, ~400 lines of dependency-free vanilla JS):
+`getUserMedia` captures the mic, an `AudioWorklet` (`pcm-worklet.js`)
+resamples it to 16kHz mono PCM16 on the audio thread and streams it over the
+WebSocket, incoming `PipelineEvent`s render live captions, and `AUDIO` events
+play back sequentially via `AudioContext`/`AudioBufferSourceNode`.
+
+**This was verified in a real browser, not just written to spec** -
+`scripts/verify_web_client.py` launches actual Chromium via Playwright with a
+synthesized WAV fed in as the fake microphone (`--use-file-for-fake-audio-capture`),
+clicks Start, and asserts captions/translation/audio genuinely render in the
+DOM:
+```bash
+pip install -r requirements-dev.txt   # adds playwright (optional, dev-only)
+python -m scripts.verify_web_client
+```
+This test is exactly how a real cross-platform bug was caught and fixed:
+pydantic's `ser_json_bytes="base64"` encodes with the **URL-safe** base64
+alphabet (`-`/`_`), which browser `atob()` silently rejects - and, it turned
+out, so does Android's `Base64.DEFAULT`. Both clients now explicitly decode
+URL-safe base64 (`app.js`'s `base64ToInt16Array`, the Android service's
+`Base64.URL_SAFE` flag); `tests/test_schema.py` locks the wire format's
+alphabet in place so this can't silently regress.
+
+### HTTPS for the web client
+
+Browsers only grant microphone access on a "secure context" - `https://` or
+`http://localhost`. `http://<lan-ip>:8000/` (what the Australian counterpart
+would open) **will not get microphone permission** without TLS. For a
+trusted LAN, a self-signed certificate is enough:
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj "/CN=localhost"
+uvicorn app.server:app --host 0.0.0.0 --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem
+```
+Then open `https://<engine-ip>:8000/` and accept the one-time browser
+warning (self-signed, not a public CA). For a real public/production
+deployment, put a reverse proxy (Caddy, nginx) with a real certificate
+(e.g. Let's Encrypt) in front instead.
 
 ## Architecture notes / trade-offs
 
@@ -244,6 +299,11 @@ pytest -q
   benchmark script.
 
 ## Native apps
+
+Two ways to connect to the same engine now: the [web client](#web-client-any-device-any-platform)
+(any device, zero install - use this for the Australian counterpart, or
+anyone without a Galaxy phone) and a native Android app (best latency/UX on
+your own Z Fold + Buds 3 Pro, via LE Audio routing the browser can't control).
 
 **Android app is in `android/`** - see `android/README.md` for full details.
 Single-screen Kotlin/Compose client: mic in, live captions + spoken
@@ -295,7 +355,13 @@ with local-agreement partials, sentence segmentation (en/ar), bidirectional
 LLM translation (local Ollama or cloud Claude) with glossary + multi-turn
 context memory, TTS (Kokoro EN + Piper AR) wired into the pipeline as AUDIO
 events, FastAPI WebSocket server, WAV + live-bidirectional-mic CLI harnesses,
-latency/WER/audio-budget benchmark, structured logging, 31 passing tests.
+latency/WER/audio-budget benchmark, structured logging, 32 passing tests.
+
+**Done (web client, this delivery):** browser UI served by the engine itself
+(`app/static/`) - works on any device with a modern browser, no install.
+Verified end-to-end in a real Chromium instance via Playwright
+(`scripts/verify_web_client.py`), which caught and led to fixing a real
+cross-client base64-encoding bug (see "Web client" above).
 
 **Done (Android, this delivery):** Kotlin/Compose single-screen app, WS
 client, mic capture + earbud playback, LE Audio routing preference,
@@ -313,21 +379,29 @@ proxy 403), so faster-whisper/Kokoro/Piper model weights can't be downloaded
 here, and Ollama isn't installed. What *was* verified in this environment:
 
 - Full pip install of `engine/requirements.txt` (incl. `kokoro-onnx`, `piper-tts`).
-- All 31 pytest tests pass (`pytest -q`), including one that runs the real
+- All 32 pytest tests pass (`pytest -q`), including one that runs the real
   bundled Silero VAD ONNX model against synthesized speech, and dedicated
   tests for AR→EN direction resolution, glossary loading (both directions),
-  context-memory accumulation across turns, and AUDIO event wiring.
+  context-memory accumulation across turns, AUDIO event wiring, and the
+  base64 wire-format alphabet (see below).
 - The complete bidirectional pipeline (VAD → ASR → segmenter → translator →
   TTS) end-to-end via `--dry-run`/`fake` providers against both a WAV file and
   synthesized audio, through `cli/translate_wav.py` (incl. `--save-audio-dir`
   writing valid WAV files), `bench/benchmark.py --with-audio`, and a live
-  `uvicorn` server hit over a real WebSocket client - including decoding the
-  base64 `audio` field back into valid PCM16 with the correct sample rate.
+  `uvicorn` server hit over a real WebSocket client.
+- **The web client, in a real browser**: `scripts/verify_web_client.py`
+  launches actual Chromium (Playwright) with a synthesized WAV as a fake
+  microphone, clicks Start, and confirms captions/translation/audio genuinely
+  render in the DOM - not just "the server responds," the whole
+  mic→AudioWorklet→WebSocket→VAD→pipeline→WebSocket→DOM chain, for real.
 - Measured: Silero VAD inference is ~0.46ms per 512-sample (32ms) window on
   this sandbox's 4-core CPU - confirms VAD is never the bottleneck.
-- Bugs caught and fixed by this live testing (Phase 1): `FakeAsr` wasn't
-  respecting the decode cadence, and `PipelineEvent`'s `use_enum_values=True`
-  silently broke `is EventType.X` identity checks in `bench/benchmark.py`.
+- Bugs caught and fixed by this live testing: `FakeAsr` wasn't respecting the
+  decode cadence (Phase 1); `PipelineEvent`'s `use_enum_values=True` silently
+  broke `is EventType.X` identity checks (Phase 1); pydantic's
+  `ser_json_bytes="base64"` uses the URL-safe alphabet, which both `atob()`
+  and Android's `Base64.DEFAULT` mis-decode (caught by the browser test,
+  fixed in both clients, locked in by a new schema test).
 
 **Not verified here** (needs your hardware + network): real faster-whisper/
 Kokoro/Piper quality and latency, real Ollama/Claude translation quality, and
@@ -338,5 +412,7 @@ to hear it end to end.
 
 ---
 
-Engine (Phase 1+2) and Android app complete. Next up: Desktop (Phase 5) or
-iOS - say which, or redirect.
+Engine (Phase 1+2), web client, and Android app complete - the web client
+alone covers "works on both my device and the Australian person's device"
+for any browser on any platform, today. Next up: Desktop meeting mode
+(Phase 5) or native iOS - say which, or redirect.

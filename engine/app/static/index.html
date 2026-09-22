@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Interpreter</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <h1>Interpreter</h1>
+  <span id="status" class="status status-disconnected">Not connected</span>
+</header>
+
+<main>
+  <section class="controls">
+    <label for="engine-url">Engine address</label>
+    <input id="engine-url" type="text" autocomplete="off" spellcheck="false" />
+    <button id="start-stop">Start</button>
+    <p id="mic-hint" class="hint"></p>
+  </section>
+
+  <section id="partial-caption" class="partial-caption" hidden>
+    <span class="lang-tag" id="partial-lang"></span>
+    <p id="partial-text"></p>
+  </section>
+
+  <section id="turns" class="turns"></section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
