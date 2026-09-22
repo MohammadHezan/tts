@@ -2,8 +2,16 @@
 <resources>
     <!-- Fixed dark theme per spec ("Big readable text, dark theme") - not
          DayNight, since a live-conversation aid should stay legible and
-         consistent regardless of the phone's system theme setting. -->
-    <style name="Theme.Interpreter" parent="Theme.Material3.Dark.NoActionBar">
+         consistent regardless of the phone's system theme setting.
+
+         This app is 100% Jetpack Compose (see ui/Theme.kt for the actual
+         Material3 color scheme) - this XML theme only applies for the brief
+         window before Compose takes over, so it uses a built-in AOSP
+         platform theme rather than pulling in the separate classic
+         com.google.android.material:material XML-views library just for
+         Theme.Material3.Dark.NoActionBar (which isn't a dependency here and
+         doesn't resolve - caught by the Android CI build). -->
+    <style name="Theme.Interpreter" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">@android:color/black</item>
         <item name="android:navigationBarColor">@android:color/black</item>
     </style>
