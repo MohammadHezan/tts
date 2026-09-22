@@ -11,6 +11,7 @@ os.environ (see .env.example).
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -19,8 +20,18 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-# app/config.py -> app/ -> engine/ -> repo root
-REPO_ROOT = Path(__file__).resolve().parents[2]
+
+def _compute_repo_root() -> Path:
+    if getattr(sys, "frozen", False):
+        # PyInstaller onedir build (see engine/windows_launcher.spec): data
+        # files (config.yaml, glossary.yaml, app/static/) are bundled
+        # alongside the executable, not three parents up from this file.
+        return Path(sys.executable).resolve().parent
+    # app/config.py -> app/ -> engine/ -> repo root
+    return Path(__file__).resolve().parents[2]
+
+
+REPO_ROOT = _compute_repo_root()
 
 
 class AudioConfig(BaseModel):

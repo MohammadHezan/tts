@@ -1,0 +1,48 @@
+name: Build Windows Desktop App
+
+# Packages engine/ (server + web client) into a double-click .exe via
+# PyInstaller, built on an actual windows-latest runner since PyInstaller
+# does not cross-compile - see engine/windows_launcher.spec.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/arabic-english-speech-translation-72v8pb
+    paths:
+      - "engine/**"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable
+        run: pyinstaller windows_launcher.spec
+
+      - name: Copy top-level docs into the bundle
+        run: |
+          copy ..\README.md dist\Interpreter\README.md
+          copy ..\.env.example dist\Interpreter\.env.example
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: interpreter-windows
+          path: engine/dist/Interpreter/
+          retention-days: 30
+          if-no-files-found: error
