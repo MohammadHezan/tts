@@ -11,27 +11,47 @@ and a Kotlin/Compose Android client with LE Audio routing for the Buds 3 Pro.
 Native iOS, foldable UX, and desktop meeting mode are **not** in this
 delivery - see [Status](#status) and [Native apps](#native-apps).
 
-## Download prebuilt (Windows + Android)
+## Download prebuilt (Windows + Linux + Android)
 
-Built by CI on real Windows/Linux runners (this repo's own dev environment
-can't cross-compile either) - see `.github/workflows/`.
+Built by CI on real Windows/Linux/Android runners (this repo's own dev
+environment can't cross-compile any of them) - see `.github/workflows/`.
+Windows and Linux both build from the exact same `engine/desktop_launcher.spec`
+(PyInstaller doesn't cross-compile, so each still needs its own native runner).
 
-1. Go to the **Actions** tab: [Windows build](https://github.com/MohammadHezan/tts/actions/workflows/build-windows.yml) / [Android build](https://github.com/MohammadHezan/tts/actions/workflows/build-android.yml)
+1. Go to the **Actions** tab: [Windows build](https://github.com/MohammadHezan/tts/actions/workflows/build-windows.yml) / [Linux build](https://github.com/MohammadHezan/tts/actions/workflows/build-linux.yml) / [Android build](https://github.com/MohammadHezan/tts/actions/workflows/build-android.yml)
 2. Open the latest run with a green check
 3. Scroll to **Artifacts** at the bottom and download:
    - **`interpreter-windows`** → unzip, run `Interpreter.exe`. It starts the
      engine and opens the web client in your browser automatically. First
      launch: Windows SmartScreen will warn "unknown publisher" (unsigned
      binary) - click "More info" → "Run anyway".
+   - **`interpreter-linux`** → unzip, `chmod +x Interpreter` (the zip should
+     preserve this, but set it again if your unzip tool stripped it), then
+     `./Interpreter` from a terminal. Same auto-opens-your-browser behavior
+     as Windows. Needs `libportaudio2` installed system-wide for live mic
+     capture (`sudo apt install libportaudio2` on Debian/Ubuntu - see
+     "Setup" below).
    - **`interpreter-android-debug`** → unzip, install the `.apk` on your
      phone. It's a debug build (not on Play Store), so Android will ask you
      to allow "install from unknown sources" once.
 
 Requires being signed into GitHub with access to this (private) repo to
-download either artifact. Both need the Windows machine and phone on the
-same network as whichever one is actually running the engine - see
-[Run it](#run-it) for what still needs setting up (Ollama, TTS voices) before
-either app does anything beyond captions.
+download any artifact.
+
+**Using the Windows/Linux build during a Zoom call to test it**: this is a
+fully local desktop app - the engine runs on that same machine, nothing else
+to connect to (see [Run it](#run-it) for what still needs setting up: Ollama,
+TTS voices - the app runs but only produces captions, no spoken audio, until
+those are in place). To actually hear the translation *through* a Zoom call
+today: run it with your normal speakers (not headphones) so Zoom's own
+microphone physically picks up what the app speaks out loud - crude but
+genuinely works for testing/demoing. Piping the translated audio directly
+into Zoom as a virtual microphone (so it's clean, no echo, no speaker/mic
+round-trip) is a real upgrade (a virtual audio cable - VB-Cable on Windows,
+a PipeWire/PulseAudio null-sink on Linux) but isn't wired up yet - say the
+word if you want that built next.
+The Android app needs neither of this - see [Standalone mode](android/README.md#standalone-mode-default---no-server-no-windows-machine),
+which runs with no engine at all.
 
 ## Project tree
 
@@ -395,6 +415,21 @@ playback, LE Audio routing preference, foreground service). Both modes build
 as a real debug APK on GitHub Actions CI (`.github/workflows/build-android.yml`,
 `ubuntu-latest`, unrestricted `dl.google.com` access unlike this sandbox);
 `:core` additionally has 11 real passing unit tests run in this sandbox.
+Iterated against real device feedback: an on-device-only ASR attempt failing
+silently on hardware with no on-device Arabic model (fixed with an automatic
+fallback to the standard system recognizer), one-tap-per-sentence replaced
+with continuous listening, and TTS audio not reaching Bluetooth earbuds
+(fixed - `SpeechRecognizer` was leaving the session on the earbuds' Bluetooth
+SCO call-audio link instead of the normal A2DP media link TTS needs).
+
+**Done (desktop, this delivery):** `engine/desktop_launcher.py` +
+`desktop_launcher.spec` package the *exact same* engine (real faster-whisper
+ASR, real Ollama/Claude translation, real Kokoro/Piper TTS - not a
+simplified on-device stand-in like Android's standalone mode) into a
+double-click desktop app via PyInstaller, for both Windows and Linux from
+the one spec file. CI-built and verified green on real `windows-latest` and
+`ubuntu-latest` runners (`.github/workflows/build-windows.yml`,
+`build-linux.yml`) - see "Download prebuilt" above.
 
 **Not yet built**: iOS app, foldable UX (split view / Flex mode / cover
 screen), desktop meeting mode (system audio loopback + overlay + virtual

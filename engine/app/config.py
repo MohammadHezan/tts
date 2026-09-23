@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 def _compute_repo_root() -> Path:
     if getattr(sys, "frozen", False):
-        # PyInstaller onedir build (see engine/windows_launcher.spec): data
+        # PyInstaller onedir build (see engine/desktop_launcher.spec): data
         # files (config.yaml, glossary.yaml, app/static/) are bundled
         # alongside the executable, not three parents up from this file.
         return Path(sys.executable).resolve().parent

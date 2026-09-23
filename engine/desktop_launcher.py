@@ -1,11 +1,13 @@
-"""Entry point for the packaged Windows desktop app (see windows_launcher.spec).
+"""Entry point for the packaged desktop app (see desktop_launcher.spec).
 
 Starts the engine server locally and opens the web client in the default
 browser - the whole "download, double-click, start talking" experience for a
-teammate who shouldn't need to touch Python/pip. Runs the exact same
-app.server:app as `uvicorn app.server:app` (see README "Run it") - this file
-only adds the auto-launch-browser convenience and a packaged entry point
-PyInstaller can build an .exe around.
+teammate who shouldn't need to touch Python/pip, on Windows or Linux (same
+launcher, same spec file - it doesn't touch anything OS-specific, only
+`threading`/`webbrowser`/`uvicorn`). Runs the exact same app.server:app as
+`uvicorn app.server:app` (see README "Run it") - this file only adds the
+auto-launch-browser convenience and a packaged entry point PyInstaller can
+build a native binary around.
 """
 
 from __future__ import annotations

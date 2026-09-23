@@ -1,10 +1,13 @@
-# PyInstaller spec for the packaged Windows desktop app.
-# Build (from engine/, on Windows, with requirements.txt + pyinstaller installed):
-#     pyinstaller windows_launcher.spec
-# Produces dist/Interpreter/Interpreter.exe (a folder build, not --onefile -
-# the ML dependencies are large enough that a onefile build would be slow to
-# unpack on every launch). See .github/workflows/build-windows.yml for the CI
-# build that produces the downloadable artifact.
+# PyInstaller spec for the packaged desktop app - Windows and Linux both
+# build from this exact file (desktop_launcher.py touches nothing OS-specific).
+# Build (from engine/, with requirements.txt + pyinstaller installed):
+#     pyinstaller desktop_launcher.spec
+# Produces dist/Interpreter/Interpreter(.exe on Windows) (a folder build, not
+# --onefile - the ML dependencies are large enough that a onefile build would
+# be slow to unpack on every launch). See .github/workflows/build-windows.yml
+# and build-linux.yml for the CI builds that produce the downloadable
+# artifacts (PyInstaller doesn't cross-compile, so each needs its own
+# native runner).
 #
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -38,7 +41,7 @@ for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "kokoro_onnx", "pipe
     hiddenimports += pkg_hiddenimports
 
 a = Analysis(
-    ["windows_launcher.py"],
+    ["desktop_launcher.py"],
     pathex=["."],
     binaries=binaries,
     datas=datas,

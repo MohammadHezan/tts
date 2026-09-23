@@ -1,9 +1,9 @@
-name: Build Windows Desktop App
+name: Build Linux Desktop App
 
-# Packages engine/ (server + web client) into a double-click .exe via
-# PyInstaller, built on an actual windows-latest runner since PyInstaller
-# does not cross-compile - see engine/desktop_launcher.spec. The Linux
-# equivalent (build-linux.yml) builds from this exact same spec file.
+# Packages engine/ (server + web client) into a native Linux binary via
+# PyInstaller, built on an actual ubuntu-latest runner - same
+# desktop_launcher.spec as the Windows build (see build-windows.yml),
+# PyInstaller just doesn't cross-compile so each OS needs its own runner.
 
 on:
   workflow_dispatch:
@@ -12,11 +12,11 @@ on:
       - claude/arabic-english-speech-translation-72v8pb
     paths:
       - "engine/**"
-      - ".github/workflows/build-windows.yml"
+      - ".github/workflows/build-linux.yml"
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: engine
@@ -26,6 +26,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install system audio deps
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 espeak-ng
 
       - name: Install dependencies
         run: |
@@ -37,13 +40,16 @@ jobs:
 
       - name: Copy top-level docs into the bundle
         run: |
-          copy ..\README.md dist\Interpreter\README.md
-          copy ..\.env.example dist\Interpreter\.env.example
+          cp ../README.md dist/Interpreter/README.md
+          cp ../.env.example dist/Interpreter/.env.example
+
+      - name: Make the binary executable
+        run: chmod +x dist/Interpreter/Interpreter
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: interpreter-windows
+          name: interpreter-linux
           path: engine/dist/Interpreter/
           retention-days: 30
           if-no-files-found: error
