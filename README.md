@@ -87,6 +87,8 @@ tts/
 │   │   ├── translate_wav.py    # python -m cli.translate_wav --file audio.wav
 │   │   ├── translate_mic.py    # python -m cli.translate_mic  (live bidirectional loop)
 │   │   ├── translate_call.py   # python -m cli.translate_call (two-way Zoom/Meet call mode)
+│   │   ├── meeting_bot.py      # python -m cli.meeting_bot    (joins Zoom/Meet as its own participant)
+│   │   ├── pipeline_runner.py  # shared one-Pipeline-against-two-devices loop (translate_call/meeting_bot)
 │   │   ├── audio_playback.py   # sequential TTS playback helper
 │   │   └── formatting.py
 │   ├── bench/
@@ -471,6 +473,56 @@ malicious app from silently recording your calls. Android's own live
 translation (Standalone mode, see [Native apps](#native-apps)) works great
 for talking to the phone directly; it can't reach into Zoom/Meet's audio.
 
+### Meeting bot (automated, Linux, joins on its own)
+
+`cli/meeting_bot.py` is a different way to reach the same result: instead of
+Call mode's setup on the machine you're already using for the call, this
+launches a headless Chromium (Playwright) that joins the meeting **as its
+own participant** - a bot with a name like "AI Interpreter" that everyone
+else in the call can just see and hear, no software or device setup needed
+on their end. This is the same general approach real meeting-bot products
+build for themselves (browser automation + OS audio routing), not an
+official Zoom/Google feature - see the Call mode intro above for why Zoom's
+actual official bot path (Meeting SDK, real raw audio) is gated behind their
+own 4-6 week external review to join meetings you don't host, and Google
+Meet has no bot API at all. A browser is just another participant either
+app already knows how to host.
+
+Only one `Pipeline` is needed (not two) - the bot is a single participant
+listening to the meeting's mixed audio and speaking translations back into
+it, and `Pipeline` already auto-detects the spoken language and flips
+translation direction per utterance, so one instance handles both directions
+of a two-person conversation flowing through it.
+
+```bash
+cd engine
+pip install -r requirements-dev.txt   # adds playwright
+playwright install chromium            # skip if you already have Chromium; pass --chromium-path instead
+python -m cli.meeting_bot --url "https://meet.google.com/xxx-xxxx-xxx" --name "AI Interpreter" --headed
+```
+
+Linux only - it uses `pactl`/PulseAudio (or PipeWire's `pactl` compatibility
+layer) to create two null-sinks, points Chromium's default mic/speaker at
+them, and runs the same translation loop as Call mode against those virtual
+devices. Windows would need a different virtual-audio mechanism (VB-CABLE,
+same as Call mode above) - not built here.
+
+**What's genuinely verified vs. not**, stated plainly rather than implied:
+outbound access to zoom.us/meet.google.com is blocked in the sandbox this
+was built in, so the actual join flow (`_join_zoom`/`_join_meet` - filling
+in a name, clicking Join) **could not be run against a real meeting page**.
+It's written defensively (matches buttons/fields by accessible role and
+text pattern, not brittle hardcoded CSS selectors, with generous timeouts),
+but that's a design choice to make it *likely* to work, not proof that it
+does. What **was** verified for real here: the Chromium launch itself
+(`find_chromium`, the exact launch args and context permissions this script
+uses, page navigation, clean shutdown) against the sandbox's real
+pre-installed Chromium - that part runs. The PulseAudio null-sink routing
+couldn't be tested either (no PulseAudio in this sandbox at all). Run with
+`--headed` the first time so you can see exactly where it stalls if it
+doesn't join cleanly, and treat `_join_meet`/`_join_zoom` in
+`cli/meeting_bot.py` as the place to fix if so.
+
 ## How Samsung's Interpreter mode gets so fast (and what we borrowed)
 
 Three things stack together, not one "magic model": (1) a dedicated NPU
@@ -545,6 +597,20 @@ unchanged, just wired to two devices instead of one, the same pattern
 `translate_mic.py` already uses for a single direction. Android **cannot**
 do this - it's an OS-level restriction, not a missing feature; see that
 section's "Why not Android."
+
+**Done (meeting bot, this delivery):** `engine/cli/meeting_bot.py` - a
+headless-Chromium bot (Playwright) that joins a Zoom/Meet meeting as its own
+participant and runs one auto-direction-detecting `Pipeline` against
+PulseAudio virtual devices wired to that browser, so no one else in the
+call needs any special setup at all. Genuinely mixed verification, stated
+plainly: the Chromium launch itself (exact executable path resolution,
+launch args, context permissions, navigation, shutdown) was run for real
+against this sandbox's pre-installed Chromium and works. The actual
+join-a-meeting flow could not be - zoom.us/meet.google.com are blocked by
+this sandbox's egress policy - and the PulseAudio null-sink routing
+couldn't be tested either (no PulseAudio installed here at all). See
+[Meeting bot](#meeting-bot-automated-linux-joins-on-its-own) for exactly
+what that means for you running it for real.
 
 **Not yet built**: iOS app, foldable UX (split view / Flex mode / cover
 screen), a GUI for call mode (device dropdowns instead of `--list-devices` +

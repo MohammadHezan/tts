@@ -39,18 +39,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import queue
-import sys
 
 import sounddevice as sd
 
 from app.config import EngineConfig, load_config
 from app.logging_utils import configure_logging
-from app.pipeline import Pipeline
-from app.providers.base import build_asr_provider, build_translator_provider, build_tts_provider
-from app.schema import EventType, PipelineEvent
-from cli.audio_playback import AudioPlayer
-from cli.formatting import format_event
+from cli.pipeline_runner import run_direction
 
 
 def _apply_dry_run(cfg: EngineConfig) -> None:
@@ -58,58 +52,6 @@ def _apply_dry_run(cfg: EngineConfig) -> None:
     cfg.translator.provider = "fake"
     if cfg.tts.provider != "none":
         cfg.tts.provider = "fake"
-
-
-async def _run_direction(
-    label: str,
-    cfg: EngineConfig,
-    input_device: int | None,
-    output_device: int | None,
-) -> None:
-    """One full listen -> translate -> speak pipeline, its own ASR/translator/TTS
-    instances end to end, reading from `input_device` and speaking to
-    `output_device`. Structurally identical to cli/translate_mic.py's run() -
-    call mode is just two of these running side by side.
-    """
-    asr = build_asr_provider(cfg.asr)
-    translator = build_translator_provider(cfg.translator)
-    tts = build_tts_provider(cfg.tts)
-    pipeline = Pipeline(cfg, asr, translator, tts)
-    player = AudioPlayer(device=output_device)
-
-    frame_samples = cfg.audio.frame_samples
-    audio_q: queue.Queue[bytes] = queue.Queue()
-
-    def on_audio(indata: object, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
-        if status:
-            print(f"[{label}] {status}", file=sys.stderr)
-        audio_q.put(bytes(indata))  # type: ignore[arg-type]
-
-    def emit(event: PipelineEvent) -> None:
-        print(f"[{label}] {format_event(event)}")
-        if event.type is EventType.AUDIO and event.audio:
-            player.enqueue(event.audio, event.audio_sample_rate or 16000)
-
-    loop = asyncio.get_event_loop()
-    with sd.RawInputStream(
-        samplerate=cfg.audio.sample_rate_hz,
-        blocksize=frame_samples,
-        device=input_device,
-        channels=cfg.audio.channels,
-        dtype="int16",
-        callback=on_audio,
-    ):
-        try:
-            while True:
-                frame = await loop.run_in_executor(None, audio_q.get)
-                async for event in pipeline.process_frame(frame):
-                    emit(event)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            async for event in pipeline.flush():
-                emit(event)
-            player.close()
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -126,8 +68,8 @@ async def run(args: argparse.Namespace) -> None:
     print("Press Ctrl+C to stop.")
 
     await asyncio.gather(
-        _run_direction("OUT", cfg, args.mic_device, args.mic_out_device),
-        _run_direction("IN", cfg, args.loopback_device, args.speaker_device),
+        run_direction("OUT", cfg, args.mic_device, args.mic_out_device),
+        run_direction("IN", cfg, args.loopback_device, args.speaker_device),
     )
 
 
