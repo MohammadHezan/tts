@@ -10,11 +10,11 @@ from app.glossary import Glossary
 def test_empty_glossary_for_missing_path() -> None:
     g = Glossary.load(None)
     assert len(g) == 0
-    assert g.format_for_prompt("en", "ar") == ""
+    assert g.format_for_prompt() == ""
 
     g2 = Glossary.load(Path("/nonexistent/glossary.yaml"))
     assert len(g2) == 0
-    assert g2.format_for_prompt("en", "ar") == ""
+    assert g2.format_for_prompt() == ""
 
 
 def test_load_and_format_both_directions(tmp_path: Path) -> None:
@@ -26,17 +26,14 @@ def test_load_and_format_both_directions(tmp_path: Path) -> None:
     g = Glossary.load(path)
     assert len(g) == 2
 
-    en_to_ar = g.format_for_prompt("en", "ar")
-    assert '"showroom" -> "صالة العرض"' in en_to_ar
-    assert '"invoice" -> "فاتورة"' in en_to_ar
-
-    ar_to_en = g.format_for_prompt("ar", "en")
-    assert '"صالة العرض" -> "showroom"' in ar_to_en
-    assert '"فاتورة" -> "invoice"' in ar_to_en
+    block = g.format_for_prompt()
+    assert '"showroom" = "صالة العرض"' in block
+    assert '"invoice" = "فاتورة"' in block
+    assert "either direction" in block
 
 
-def test_format_for_prompt_ignores_non_en_ar_pairs(tmp_path: Path) -> None:
-    path = tmp_path / "glossary.yaml"
-    path.write_text('terms:\n  - en: "showroom"\n    ar: "صالة العرض"\n', encoding="utf-8")
-    g = Glossary.load(path)
-    assert g.format_for_prompt("en", "fr") == ""
+def test_repo_glossary_loads() -> None:
+    from app.config import REPO_ROOT
+
+    g = Glossary.load(REPO_ROOT / "glossary.yaml")
+    assert '"walnut" = "خشب الجوز"' in g.format_for_prompt()

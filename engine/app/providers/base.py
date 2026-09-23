@@ -50,6 +50,8 @@ class TurnContext:
 
     source_text: str
     translated_text: str
+    source_lang: str = "en"
+    target_lang: str = "ar"
 
 
 class TranslatorProvider(ABC):

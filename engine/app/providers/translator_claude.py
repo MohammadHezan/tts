@@ -14,7 +14,7 @@ import httpx
 
 from app.config import REPO_ROOT, TranslatorConfig
 from app.glossary import Glossary
-from app.prompts import build_context_messages, build_system_prompt
+from app.prompts import build_messages, build_system_prompt, clean_translation, max_output_tokens
 from app.providers.base import TranslatorProvider, TurnContext
 
 _API_URL = "https://api.anthropic.com/v1/messages"
@@ -47,22 +47,20 @@ class ClaudeTranslator(TranslatorProvider):
         target_lang: str,
         context: list[TurnContext] | None = None,
     ) -> str:
-        messages = build_context_messages(context)
-        messages.append({"role": "user", "content": text})
-
         response = await self._client.post(
             _API_URL,
             json={
                 "model": self._cfg.claude.model,
-                "system": build_system_prompt(source_lang, target_lang, self._cfg.domain_prompt, self._glossary),
-                "messages": messages,
-                "max_tokens": self._cfg.claude.max_tokens,
-                "temperature": 0.2,
+                "system": build_system_prompt(self._cfg.domain_prompt, self._glossary),
+                "messages": build_messages(text, source_lang, target_lang, context),
+                "max_tokens": min(self._cfg.claude.max_tokens, max_output_tokens(text)),
+                "temperature": 0,
             },
         )
         response.raise_for_status()
         payload = response.json()
-        return "".join(block["text"] for block in payload["content"] if block["type"] == "text").strip()
+        output = "".join(block["text"] for block in payload["content"] if block["type"] == "text")
+        return clean_translation(text, output)
 
     async def aclose(self) -> None:
         await self._client.aclose()

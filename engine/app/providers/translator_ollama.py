@@ -10,7 +10,7 @@ import httpx
 
 from app.config import REPO_ROOT, TranslatorConfig
 from app.glossary import Glossary
-from app.prompts import build_context_messages, build_system_prompt
+from app.prompts import build_messages, build_system_prompt, clean_translation, max_output_tokens
 from app.providers.base import TranslatorProvider, TurnContext
 
 
@@ -27,10 +27,9 @@ class OllamaTranslator(TranslatorProvider):
         target_lang: str,
         context: list[TurnContext] | None = None,
     ) -> str:
-        system_prompt = build_system_prompt(source_lang, target_lang, self._cfg.domain_prompt, self._glossary)
+        system_prompt = build_system_prompt(self._cfg.domain_prompt, self._glossary)
         messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(build_context_messages(context))
-        messages.append({"role": "user", "content": text})
+        messages.extend(build_messages(text, source_lang, target_lang, context))
 
         response = await self._client.post(
             "/api/chat",
@@ -39,12 +38,14 @@ class OllamaTranslator(TranslatorProvider):
                 "messages": messages,
                 "stream": False,
                 "keep_alive": self._cfg.ollama.keep_alive,
-                "options": {"temperature": 0.2},
+                # Deterministic: a live interpreter should say the same thing
+                # for the same sentence, not a creative variation of it.
+                "options": {"temperature": 0, "num_predict": max_output_tokens(text)},
             },
         )
         response.raise_for_status()
         payload = response.json()
-        return str(payload["message"]["content"]).strip()
+        return clean_translation(text, str(payload["message"]["content"]))
 
     async def aclose(self) -> None:
         await self._client.aclose()

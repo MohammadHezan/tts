@@ -183,7 +183,14 @@ class Pipeline:
                     )
 
             if translated_sentences:
-                self._context.append(TurnContext(source_text=hyp.text, translated_text=" ".join(translated_sentences)))
+                self._context.append(
+                    TurnContext(
+                        source_text=hyp.text,
+                        translated_text=" ".join(translated_sentences),
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                )
 
         self._latency_by_turn[turn_id] = tracker.as_dict()
         log_event(_LOGGER, logging.INFO, "turn_complete", turn_id=turn_id, **tracker.as_dict())

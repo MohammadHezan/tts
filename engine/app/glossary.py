@@ -44,14 +44,15 @@ class Glossary:
     def __len__(self) -> int:
         return len(self._terms)
 
-    def format_for_prompt(self, source_lang: str, target_lang: str) -> str:
-        """Renders the glossary as a system-prompt block for this turn's
-        translation direction, or "" if empty/the language pair isn't en<->ar.
+    def format_for_prompt(self) -> str:
+        """Renders the glossary as a system-prompt block covering both directions
+        (the same text whichever way a turn is translated - see app/prompts.py),
+        or "" if empty.
         """
         if not self._terms:
             return ""
-        pairs = {"en", "ar"}
-        if {source_lang, target_lang} != pairs:
-            return ""
-        lines = [f'- "{t.en if source_lang == "en" else t.ar}" -> "{t.ar if target_lang == "ar" else t.en}"' for t in self._terms]
-        return "Use these exact translations for the following terms whenever they appear:\n" + "\n".join(lines)
+        lines = [f'- "{t.en}" = "{t.ar}"' for t in self._terms]
+        return (
+            "Always use these exact translations, in either direction (English = Arabic):\n"
+            + "\n".join(lines)
+        )

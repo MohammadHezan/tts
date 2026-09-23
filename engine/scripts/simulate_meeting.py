@@ -75,6 +75,7 @@ class Line:
     text: str
     meaning_en: str  # what it means in English - the reference for "understood"
     keys: tuple[str, ...]  # regexes the listener-side English must contain
+    terms: tuple[str, ...]  # regexes the bot's translation text itself must contain
 
 
 SCRIPT = (
@@ -83,23 +84,27 @@ SCRIPT = (
         "Good morning Omar, thank you for joining the call today.",
         "Good morning Omar, thank you for joining the call today.",
         (r"morning", r"thank", r"call|join|meeting"),
+        (r"صباح", r"شكر"),
     ),
     Line(
         "B", "ar",
         "صباح النور، يسعدني أن أعرض عليكم مجموعتنا الجديدة من الكنب الفاخرة.",
         "Good morning, I am pleased to show you our new collection of luxury sofas.",
         (r"morning", r"collection|range|new", r"sofa|couch|furniture"),
+        (r"morning", r"collection"),
     ),
     Line(
         "A", "en",
         "We would like to order twenty dining chairs in walnut wood.",
         "We would like to order twenty dining chairs in walnut wood.",
         (r"twenty|\b20\b", r"chair", r"walnut|nut|wood"),
+        (r"20|عشرين|عشرون", r"كرسي|كراسي", r"الجوز"),
     ),
     Line(
         "B", "ar",
         "ممتاز، نستطيع تسليم الطلب خلال ثلاثة أسابيع.",
         "Excellent, we can deliver the order within three weeks.",
+        (r"deliver", r"three|\b3\b", r"week"),
         (r"deliver", r"three|\b3\b", r"week"),
     ),
 )
@@ -356,6 +361,8 @@ class Turn:
     listener_heard: str = ""  # listener-side Whisper, in the language the bot spoke
     listener_english: str = ""  # ... and in English, for the key-word check
     wer: float | None = None
+    terms_missing: list[str] = field(default_factory=list)
+    length_ratio: float | None = None
     keys_found: list[str] = field(default_factory=list)
     checks: dict[str, bool | None] = field(default_factory=dict)
 
@@ -404,13 +411,13 @@ _AR_DIACRITICS = re.compile(r"[ً-ْـ]")
 _NUMBERS = {"20": "twenty", "3": "three"}
 
 
-def normalize(text: str, lang: str) -> str:
+def normalize(text: str, lang: str, spell_numbers: bool = True) -> str:
     text = text.lower()
     if lang == "ar":
         text = _AR_DIACRITICS.sub("", text)
         text = re.sub("[أإآ]", "ا", text).replace("ة", "ه").replace("ى", "ي")
     text = re.sub(r"[^\w\s]", " ", text)
-    words = [_NUMBERS.get(w, w) for w in text.split()]
+    words = [_NUMBERS.get(w, w) if spell_numbers else w for w in text.split()]
     return " ".join(words)
 
 
@@ -438,6 +445,12 @@ def check_turn(turn: Turn, ears: ListenerEars | None, fake_engine: bool) -> None
         share = arabic_share(turn.said)
         in_target = share > 0.6 if target == "ar" else (bool(turn.said) and share < 0.1)
         turn.checks["translated"] = turn.said_lang == target and in_target
+        # Right key terms (walnut must not become cedar), and nothing tacked on
+        # that nobody said - the bot speaks this into the meeting.
+        said = normalize(turn.said, target, spell_numbers=False)
+        turn.terms_missing = [t for t in line.terms if not re.search(t, said)]
+        turn.length_ratio = len(turn.said) / max(1, len(line.text))
+        turn.checks["faithful"] = not turn.terms_missing and turn.length_ratio <= 2.0
     turn.checks["spoke"] = len(turn.bot_audio) >= SAMPLE_RATE // 2
     turn.checks["no errors"] = not turn.errors and not turn.timed_out
 
@@ -492,6 +505,11 @@ def write_report(out: Path, turns: list[Turn], meeting: Meeting, feed: CaptionFe
         ]
         lines.append("| " + " | ".join(c.replace("|", "/") for c in cells) + " |")
     for i, t in enumerate(turns, 1):
+        if t.checks.get("faithful") is False:
+            lines.append(
+                f"\nTurn {i} not faithful: missing {t.terms_missing or 'nothing'}, "
+                f"translation {t.length_ratio:.1f}x the length of what was said"
+            )
         if t.errors or t.timed_out:
             lines.append(f"\nTurn {i} problems: {'timed out; ' if t.timed_out else ''}{'; '.join(t.errors)}")
     lines += [
@@ -517,7 +535,9 @@ def write_report(out: Path, turns: list[Turn], meeting: Meeting, feed: CaptionFe
                 "bot_voice_seconds": round(len(t.bot_audio) / SAMPLE_RATE, 2),
                 "voice_after_s": t.voice_after_s, "text_after_s": t.text_after_s,
                 "listener_heard": t.listener_heard, "listener_english": t.listener_english,
-                "keys": list(t.line.keys), "keys_found": t.keys_found, "checks": t.checks,
+                "keys": list(t.line.keys), "keys_found": t.keys_found,
+                "terms": list(t.line.terms), "terms_missing": t.terms_missing, "length_ratio": t.length_ratio,
+                "checks": t.checks,
             }
             for t in turns
         ],
