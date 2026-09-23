@@ -50,7 +50,7 @@ fun CaptionBridgeScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Caption Bridge") },
-                actions = { TextButton(onClick = onSwitchMode) { Text("Standalone mode") } },
+                actions = { TextButton(onClick = onSwitchMode) { Text("Meeting Bot") } },
             )
         },
     ) { padding ->

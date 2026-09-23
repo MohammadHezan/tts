@@ -1,0 +1,51 @@
+/* Meeting-bot dashboard - builds on style.css's tokens. */
+#meeting-url,
+#bot-name {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #3a3a3f;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 15px;
+}
+
+button.secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid #3a3a3f;
+}
+
+.warnings {
+  background: var(--surface);
+  border-left: 4px solid var(--warn);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.warnings p {
+  margin: 0 0 6px;
+}
+
+.warnings p:last-child {
+  margin-bottom: 0;
+}
+
+.warnings code {
+  color: var(--primary);
+}
+
+.turn .heard-tag,
+.turn .said-tag {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.turn .said-tag {
+  color: var(--ok);
+}

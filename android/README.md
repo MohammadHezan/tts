@@ -3,10 +3,12 @@
 Talk into your phone, hear the translation back - no server required. The
 app opens in **Standalone mode** by default: on-device speech recognition,
 on-device translation, and the phone's own text-to-speech, entirely local
-after a one-time setup. Two more modes are a tap away: **Caption Bridge**
+after a one-time setup. More modes are a tap away: **Caption Bridge**
 (translates Zoom/Google Meet's own Live Captions while you're in a call -
-see below for exactly what it can and can't do) and **Engine mode** (talk to
-the `engine/` WebSocket service on your LAN for higher-quality,
+listening only), **Meeting Bot** (sends an interpreter bot into a Zoom/Meet
+call that hears everyone *and* speaks the translation into it - runs on your
+computer, controlled from the phone), and **Engine mode** (talk to the
+`engine/` WebSocket service on your LAN for higher-quality,
 glossary/context-aware translation). Built for Galaxy Z Fold + Galaxy Buds
 3 Pro, but works on any Android 12+ (API 31+) phone.
 
@@ -96,6 +98,29 @@ Source: `app/src/main/kotlin/com/interpreter/app/captionbridge/` -
 `CaptionBridgeScreen.kt`. Reuses `MlKitTranslator`/`OnDeviceTts` from
 `standalone/` unchanged - only the input side (accessibility-read text
 instead of `SpeechRecognizer` audio) is new.
+
+## Meeting Bot (Zoom/Meet, full two-way - via your computer)
+
+The phone-side answer to "make it hear the call *and* speak into it": the
+phone doesn't do the audio at all. It sends an **interpreter bot** into the
+Zoom/Meet call - the bot runs on your computer (the translator server from the
+root README's "Meeting Interpreter" section) and joins as its own
+participant, so it can hear everyone and speak the translation into the call.
+That is the only way to get both directions: Android blocks any app from
+capturing another app's call audio or acting as its microphone (see Caption
+Bridge above), but a separate participant needs neither.
+
+**Use it:** Caption Bridge → "Meeting Bot" in the top bar. Enter your
+computer's address on the same Wi-Fi (e.g. `http://192.168.1.50:8765`), paste
+the meeting link, tap *Send interpreter into meeting*, admit the bot from the
+meeting's waiting room. The screen shows each sentence it heard and what it
+said, live. Leaving the screen doesn't pull the bot out - *Remove bot* does.
+
+Source: `app/src/main/kotlin/com/interpreter/app/meetingbot/` -
+`MeetingBotApi.kt` (the server's `/api/bots` REST + caption websocket),
+`MeetingBotViewModel.kt`, `MeetingBotScreen.kt`. Captions go through core's
+existing `ConversationState` reducer unchanged - the server sends the same
+`PipelineEvent` JSON Engine mode already parses.
 
 ## Two modules, on purpose
 

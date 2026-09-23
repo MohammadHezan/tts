@@ -23,19 +23,22 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.interpreter.app.captionbridge.CaptionAccessibilityService
 import com.interpreter.app.captionbridge.CaptionBridgeScreen
 import com.interpreter.app.captionbridge.CaptionBridgeViewModel
+import com.interpreter.app.meetingbot.MeetingBotScreen
+import com.interpreter.app.meetingbot.MeetingBotViewModel
 import com.interpreter.app.standalone.StandaloneScreen
 import com.interpreter.app.standalone.StandaloneViewModel
 import com.interpreter.app.ui.InterpreterScreen
 import com.interpreter.app.ui.InterpreterTheme
 import com.interpreter.app.ui.InterpreterViewModel
 
-private enum class AppMode { STANDALONE, ENGINE, CAPTION_BRIDGE }
+private enum class AppMode { STANDALONE, ENGINE, CAPTION_BRIDGE, MEETING_BOT }
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: InterpreterViewModel by viewModels()
     private val standaloneViewModel: StandaloneViewModel by viewModels()
     private val captionBridgeViewModel: CaptionBridgeViewModel by viewModels()
+    private val meetingBotViewModel: MeetingBotViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,8 +122,23 @@ class MainActivity : ComponentActivity() {
                             },
                             onSwitchMode = {
                                 captionBridgeViewModel.stop()
-                                mode = AppMode.ENGINE
+                                mode = AppMode.MEETING_BOT
                             },
+                        )
+                    }
+
+                    AppMode.MEETING_BOT -> {
+                        val uiState by meetingBotViewModel.uiState.collectAsState()
+                        // Leaving this screen doesn't pull the bot out of the call -
+                        // it keeps interpreting on the server until removed.
+                        MeetingBotScreen(
+                            uiState = uiState,
+                            onServerUrlChange = meetingBotViewModel::setServerUrl,
+                            onMeetingUrlChange = meetingBotViewModel::setMeetingUrl,
+                            onBotNameChange = meetingBotViewModel::setBotName,
+                            onSendBot = meetingBotViewModel::sendBot,
+                            onRemoveBot = meetingBotViewModel::removeBot,
+                            onSwitchMode = { mode = AppMode.ENGINE },
                         )
                     }
 

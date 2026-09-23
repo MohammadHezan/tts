@@ -1,0 +1,54 @@
+# Meeting Interpreter - the translator side. Attendee (the meeting bot that
+# actually joins Zoom/Meet) runs from its own official setup, not from here:
+# see README "Meeting Interpreter" for why and for the full walkthrough.
+#
+#   docker compose up -d --build
+#   open http://localhost:8765/bot.html
+#
+# Needs ./models with the Kokoro + Piper voice files (README "Setup") and a
+# .env with ATTENDEE_BASE_URL / ATTENDEE_API_KEY / ATTENDEE_CALLBACK_WS_URL.
+
+services:
+  translator:
+    build: .
+    ports:
+      - "8765:8000" # 8765 on the host, since Attendee's own web app usually wants 8000
+    env_file:
+      - path: .env
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # lets ATTENDEE_BASE_URL point at an Attendee on this host, on Linux too
+    volumes:
+      - ./models:/models:ro
+      - whisper-cache:/root/.cache/huggingface
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully # don't come up "working" before the model exists
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # One-shot: fetches the translation model into the ollama volume on first
+  # run (~4.9GB), then exits. Re-running is a fast no-op once it's there.
+  ollama-pull:
+    image: ollama/ollama
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["ollama", "pull", "llama3.1:8b-instruct-q4_K_M"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  ollama-models:
+  whisper-cache:

@@ -1,0 +1,64 @@
+# Translator config for docker-compose.yml. Same schema as the repo-root
+# config.yaml, adjusted for running in a container with no GPU:
+#   - ASR on CPU with a smaller Whisper model (large-v3-turbo on CPU can't keep
+#     up with a live meeting - see README "Hardware")
+#   - Ollama reached at the compose service name, not localhost
+#   - TTS on, since a meeting bot that can't speak is only half useful; the
+#     voice files are mounted at /models (see docker-compose.yml)
+
+audio:
+  sample_rate_hz: 16000
+  frame_ms: 30
+  channels: 1
+
+vad:
+  provider: silero
+  threshold: 0.5
+  min_speech_ms: 150
+  min_silence_ms: 700
+  speech_pad_ms: 200
+
+asr:
+  provider: faster_whisper
+  model: small # multilingual (not small.en) - it must hear both Arabic and English
+  device: cpu
+  compute_type: int8
+  language: auto
+  beam_size: 1
+  local_agreement:
+    enabled: true
+    chunk_ms: 500
+    agreement_window: 2
+
+translator:
+  provider: ollama
+  source_lang: en
+  target_lang: ar
+  domain_prompt: retail_furniture
+  context_turns: 6
+  glossary_path: glossary.yaml
+  ollama:
+    base_url: http://ollama:11434
+    model: llama3.1:8b-instruct-q4_K_M
+    timeout_s: 30
+  claude:
+    model: claude-haiku-4-5-20251001
+    timeout_s: 15
+    max_tokens: 512
+
+tts:
+  provider: multi_voice
+  sample_rate_hz: 24000
+  kokoro:
+    model_path: /models/kokoro-v1.0.onnx
+    voices_path: /models/voices-v1.0.bin
+    voice: af_heart
+    lang: en-us
+  piper:
+    model_path: /models/ar_JO-kareem-medium.onnx
+    config_path: null
+
+logging:
+  level: INFO
+  structured: true
+  latency_metrics: true

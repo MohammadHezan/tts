@@ -1,0 +1,10 @@
+.git
+.github
+android
+models
+**/__pycache__
+**/.pytest_cache
+**/.venv
+engine/dist
+engine/build
+.env

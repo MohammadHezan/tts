@@ -104,6 +104,12 @@ button:disabled {
   color: var(--warn);
 }
 
+.nav-link {
+  width: 100%;
+  font-size: 14px;
+  color: var(--primary);
+}
+
 .partial-caption {
   background: var(--surface-2);
   border-radius: 12px;

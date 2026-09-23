@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meeting Interpreter</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="bot.css" />
+</head>
+<body>
+<header class="topbar">
+  <h1>Meeting Interpreter</h1>
+  <span id="status" class="status status-disconnected">No bot</span>
+</header>
+
+<main>
+  <section id="warnings" class="warnings" hidden></section>
+
+  <section class="controls">
+    <label for="meeting-url">Zoom or Google Meet link</label>
+    <input id="meeting-url" type="url" autocomplete="off" spellcheck="false"
+           placeholder="https://meet.google.com/abc-defg-hij" />
+    <label for="bot-name">Bot name shown in the meeting</label>
+    <input id="bot-name" type="text" autocomplete="off" value="AI Interpreter" />
+    <button id="send-bot">Send interpreter into meeting</button>
+    <button id="remove-bot" class="secondary" hidden>Remove bot</button>
+    <p id="bot-hint" class="hint"></p>
+  </section>
+
+  <section id="turns" class="turns"></section>
+</main>
+
+<script src="bot.js"></script>
+</body>
+</html>
