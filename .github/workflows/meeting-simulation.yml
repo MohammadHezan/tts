@@ -8,6 +8,10 @@ name: Meeting Simulation (2 devices, real models)
 
 on:
   workflow_dispatch:
+    inputs:
+      whisper_model:
+        description: "Whisper model for the translator (small = the shipped default; medium hears Arabic better but is slower on CPU)"
+        default: small
   push:
     branches: [claude/arabic-english-speech-translation-72v8pb]
     paths:
@@ -19,7 +23,7 @@ on:
       - ".github/workflows/meeting-simulation.yml"
 
 concurrency:
-  group: meeting-simulation-${{ github.ref }}
+  group: meeting-simulation-${{ github.ref }}-${{ inputs.whisper_model || 'small' }}
   cancel-in-progress: true
 
 jobs:
@@ -59,6 +63,13 @@ jobs:
           EOF
           cat .env
 
+      - name: Use the requested Whisper model
+        env:
+          WHISPER_MODEL: ${{ inputs.whisper_model || 'small' }}
+        run: |
+          sed -i -E "s/^(  model: )small( .*)?$/\1${WHISPER_MODEL}\2/" deploy/config.docker.yaml
+          grep -n -A1 "^asr:" -m1 deploy/config.docker.yaml; grep -n "^  model:" deploy/config.docker.yaml
+
       - name: docker compose up -d --build
         run: docker compose up -d --build
 
@@ -84,11 +95,13 @@ jobs:
 
       - name: Run the two-device meeting
         working-directory: engine
+        env:
+          WHISPER_MODEL: ${{ inputs.whisper_model || 'small' }}
         run: |
           python -u -m scripts.simulate_meeting \
             --engine-url http://localhost:8765 --api-key sim-key \
             --voices-dir ../sim-voices --dashboard --out ../sim-output \
-            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper small (CPU, int8), Ollama llama3.1 8B q4 (CPU), Kokoro EN + Piper AR voices" \
+            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper ${WHISPER_MODEL} (CPU, int8), Ollama llama3.1 8B q4 (CPU), Kokoro EN + Piper AR voices" \
             --info "Machine=GitHub ubuntu-latest runner: 4 vCPU, 16GB RAM, no GPU"
 
       - name: Collect the translator's logs

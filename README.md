@@ -495,6 +495,60 @@ the `POST /api/v1/bots/{id}/leave` endpoint, are inferred rather than seen
 verbatim. If Attendee rejects a request, the dashboard shows its exact error
 message - that pinpoints what to change in `attendee_client.py`.
 
+### Tested: a two-device meeting with the real models
+
+`.github/workflows/meeting-simulation.yml` runs the **actual `docker compose`
+stack** (real Whisper, Ollama llama3.1 8B, Kokoro, Piper) in a simulated call,
+set up exactly as in "Test it now" above. The script is
+`engine/scripts/simulate_meeting.py`:
+
+- **Device A** (Sarah) speaks English and **Device B** (Omar) speaks Arabic,
+  each in their own Piper voice (not the bot's), taking turns about an order.
+- A stand-in for Attendee + Zoom/Meet accepts the "send a bot" request that
+  the dashboard makes (a real Chromium clicks the button), streams everyone's
+  audio to the bot in real time (20ms chunks), and plays the bot's voice to both
+  devices.
+- Per turn, it checks four things:
+  - the bot heard the speaker correctly;
+  - the translation is in the other language, has the key terms and nothing
+    added (walnut must be خشب الجوز, and the translation can be at most 2x the
+    length of what was said);
+  - the bot's voice reached the other device;
+  - a separate Whisper listening to that device's recording understands it.
+- The report is on each run's page (Actions → *Meeting Simulation* → the run).
+  The `meeting-simulation` artifact holds what each device heard
+  (`device_A_sarah_hears.wav`, `device_B_omar_hears.wav`), the whole call, and a
+  dashboard screenshot. To run it again: *Run workflow* on that page, optionally
+  with `whisper_model: medium`.
+
+Latest result on a GitHub runner (4 CPU cores, **no GPU**), all checks passing:
+
+| Speaker | Said | Bot said |
+|---|---|---|
+| Sarah (EN) | Good morning Omar, thank you for joining the call today. | صباح الخير عمر، شكراً لك على الانضمام إلى المكالمة اليوم. |
+| Omar (AR) | صباح النور، يسعدني أن أعرض عليكم مجموعتنا الجديدة من الكنب الفاخرة. | Good morning, I'm delighted to present to you our new collection of luxury furniture. |
+| Sarah (EN) | We would like to order twenty dining chairs in walnut wood. | نرغب في طلب 20 كرسيًا طعامًا من خشب الجوز. |
+| Omar (AR) | ممتاز، نستطيع تسليم الطلب خلال ثلاثة أسابيع. | Excellent, I can have the order delivered within three weeks. |
+
+What the simulation found and fixed, and what it still shows:
+- **Fixed:** the bot spoke an invented follow-up question nobody asked.
+  Translation requests now name the direction and forbid replying, and
+  `clean_translation()` drops sentences tacked on.
+- **Fixed:** "walnut wood" was translated as cedar. The glossary now has the
+  furniture materials.
+- **Fixed:** translation was 2-3x slower than necessary on CPU, because the
+  system prompt changed with every direction flip.
+- **Still weak: Arabic speech recognition with Whisper `small`** (the Docker
+  default). It heard "الكنب" (sofas) as noise, hence "furniture" above, and got
+  "نستطيع" slightly wrong. English recognition was word-perfect. A bigger Whisper
+  hears Arabic better (`asr.model` in `deploy/config.docker.yaml`, then rebuild),
+  at the cost of CPU time. The speakers here are synthetic voices; real voices
+  may do better or worse.
+- **Delay on CPU only:** about 12-14s from when someone stops talking to when
+  the other side hears the translation. The first sentence took ~35s while the
+  model was still loading. The split is Whisper ~4s, translation ~6-7s,
+  voice 0.5-2.5s. Translation is the part a GPU removes (`docker-compose.gpu.yml`).
+
 ## Call mode (Windows/Linux + Zoom/Meet)
 
 Two live translation directions running at once, so you speak your language
