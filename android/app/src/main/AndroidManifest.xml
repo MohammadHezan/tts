@@ -50,6 +50,24 @@
             android:exported="false"
             android:foregroundServiceType="microphone|connectedDevice" />
 
+        <!-- Caption Bridge (see android/README.md): reads Zoom/Meet's own
+             Live Captions text and translates it. Requires the user to
+             manually enable it in system Accessibility settings - Android
+             does not allow this permission class to be granted any other
+             way, by design. -->
+        <service
+            android:name=".captionbridge.CaptionAccessibilityService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/caption_accessibility_service_config" />
+        </service>
+
     </application>
 
 </manifest>

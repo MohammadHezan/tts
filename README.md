@@ -343,6 +343,17 @@ on-device Android platform APIs (`SpeechRecognizer`, ML Kit Translate,
 beyond one one-time per-language model download. This is the mode for "I
 talk to it and it responds in another language" with nothing else running.
 
+**Caption Bridge** is also one tap away: translates Zoom/Google Meet's own
+Live Captions while you're in a call on the phone, speaking the translation
+back to you. Listening-only - it reads their on-screen caption text via
+Android's `AccessibilityService` (confirmed to be the only legitimate way to
+get call-audio-derived text on Android at all - the API for capturing
+another app's *audio* directly, `AudioPlaybackCaptureConfiguration`,
+explicitly excludes the `USAGE_VOICE_COMMUNICATION` streams Zoom/Meet use).
+It has no way to send a reply back into the call - see
+`android/README.md`'s Caption Bridge section for the full explanation and
+its setup steps.
+
 **Engine mode** is one tap away in the same app for when you want it: a thin
 WebSocket client to this repo's `engine/` (domain-tuned glossary, multi-turn
 context memory, LE Audio (LC3) routing preference for the Buds 3 Pro - see
@@ -487,13 +498,19 @@ Verified end-to-end in a real Chromium instance via Playwright
 (`scripts/verify_web_client.py`), which caught and led to fixing a real
 cross-client base64-encoding bug (see "Web client" above).
 
-**Done (Android, this delivery):** Kotlin/Compose app with two modes -
+**Done (Android, this delivery):** Kotlin/Compose app with three modes -
 **Standalone** (default: on-device `SpeechRecognizer` + ML Kit Translate +
-`TextToSpeech`, no server) and **Engine** (WS client, mic capture + earbud
-playback, LE Audio routing preference, foreground service). Both modes build
+`TextToSpeech`, no server), **Caption Bridge** (translates Zoom/Meet's own
+Live Captions via `AccessibilityService` - listening only, see
+`android/README.md`), and **Engine** (WS client, mic capture + earbud
+playback, LE Audio routing preference, foreground service). All three build
 as a real debug APK on GitHub Actions CI (`.github/workflows/build-android.yml`,
 `ubuntu-latest`, unrestricted `dl.google.com` access unlike this sandbox);
 `:core` additionally has 11 real passing unit tests run in this sandbox.
+Caption Bridge's on-screen-text detection heuristic could not be verified
+against a live Zoom/Meet call in this sandbox (no account, no call
+available) - it ships with a debug view showing exactly what it detected, so
+it can be confirmed/tuned against a real device.
 Iterated against real device feedback: an on-device-only ASR attempt failing
 silently on hardware with no on-device Arabic model (fixed with an automatic
 fallback to the standard system recognizer), one-tap-per-sentence replaced

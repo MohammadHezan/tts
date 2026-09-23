@@ -3,9 +3,11 @@
 Talk into your phone, hear the translation back - no server required. The
 app opens in **Standalone mode** by default: on-device speech recognition,
 on-device translation, and the phone's own text-to-speech, entirely local
-after a one-time setup. **Engine mode** (talk to the `engine/` WebSocket
-service on your LAN for higher-quality, glossary/context-aware translation)
-is one tap away for when you want it. Built for Galaxy Z Fold + Galaxy Buds
+after a one-time setup. Two more modes are a tap away: **Caption Bridge**
+(translates Zoom/Google Meet's own Live Captions while you're in a call -
+see below for exactly what it can and can't do) and **Engine mode** (talk to
+the `engine/` WebSocket service on your LAN for higher-quality,
+glossary/context-aware translation). Built for Galaxy Z Fold + Galaxy Buds
 3 Pro, but works on any Android 12+ (API 31+) phone.
 
 ## Standalone mode (default - no server, no Windows machine)
@@ -38,6 +40,62 @@ trade, not a bug:
   conversation-context memory across turns.
 - First use of each language pair needs one internet connection to fetch its
   ~30MB ML Kit model; every use after that is fully offline.
+
+## Caption Bridge (Zoom/Meet, listening only)
+
+Translates whatever Zoom or Google Meet's own **Live Captions** feature is
+already showing on screen, and speaks the translation. Built after directly
+confirming this is the only legitimate way to get call audio-derived text on
+Android at all: `AudioPlaybackCaptureConfiguration` (the API for one app to
+record another app's audio) explicitly excludes `USAGE_VOICE_COMMUNICATION`
+streams, and Zoom/Meet's call audio is documented as using exactly that -
+there is no way to capture their audio directly, on-device, without root.
+Reading their *captions* instead is a completely different, fully
+OS-sanctioned mechanism (`AccessibilityService` - the same API screen
+readers use to read on-screen text), so this is real and legal where audio
+capture isn't.
+
+**What it does**: watches for on-screen text in Zoom (`us.zoom.videomeetings`)
+and Meet (`com.google.android.apps.meetings`) only - nothing else on your
+phone - reads their caption text as it updates, translates it, and speaks
+the translation.
+
+**What it does not do**: send anything back into the call. This is listening
+only. To reply, speak for yourself, or switch to Standalone mode to
+translate what *you* say and say that translation yourself. Building a
+version of this that also talks back into the call would need Zoom's
+official Meeting SDK bot path (raw audio, but gated behind Zoom's own 4-6
+week external app-review process to join meetings you don't host) or,
+for Meet, a desktop browser-automation bot (Meet has no bot API at all) -
+both are desktop-only regardless.
+
+**Setup:**
+1. Grant the accessibility permission: open Caption Bridge in the app, tap
+   "Open accessibility settings", find "Interpreter" in the list, turn it on.
+   Android requires this to be a manual step in system Settings for this
+   permission class - it cannot be requested like a normal runtime permission.
+2. In your Zoom/Meet call, turn on that app's own Live Captions/Live
+   Transcript feature (the CC icon in their call controls).
+3. Pick which language the *other person* is speaking in Caption Bridge's
+   chip row. Translated lines appear and are spoken automatically as their
+   captions update.
+
+**Honest caveat**: Zoom/Meet don't publish a stable "this is the caption
+text" identifier, so `CaptionAccessibilityService.findLikelyCaptionText()`
+uses a heuristic (a view-id keyword match, falling back to the longest text
+in the bottom half of the screen, where captions are conventionally
+overlaid) that could not be verified against a live call in the sandbox this
+was built in - there's no Zoom/Meet account or live call available there.
+The screen has a "raw detected text" debug panel so you can confirm on your
+actual device whether it's reading the right thing; if it isn't, that
+heuristic in `captionbridge/CaptionAccessibilityService.kt` is exactly what
+needs adjusting; describing what it grabs instead would pin down the fix.
+
+Source: `app/src/main/kotlin/com/interpreter/app/captionbridge/` -
+`CaptionAccessibilityService.kt`, `CaptionBridgeViewModel.kt`,
+`CaptionBridgeScreen.kt`. Reuses `MlKitTranslator`/`OnDeviceTts` from
+`standalone/` unchanged - only the input side (accessibility-read text
+instead of `SpeechRecognizer` audio) is new.
 
 ## Two modules, on purpose
 

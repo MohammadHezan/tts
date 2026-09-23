@@ -14,4 +14,6 @@
     <string name="status_connected">Connected — speak now</string>
     <string name="status_error">Connection error</string>
     <string name="permission_rationale">Microphone and Bluetooth access are required to listen and speak translations through your earbuds.</string>
+
+    <string name="caption_bridge_service_description">Reads the Live Captions text shown by Zoom or Google Meet while one of those apps is open, so Interpreter can translate and speak it. It only reads text those apps already display on screen for their own captions - it never reads anything in any other app, never reads audio, and never controls your screen.</string>
 </resources>
