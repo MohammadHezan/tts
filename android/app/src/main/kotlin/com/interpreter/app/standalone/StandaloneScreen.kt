@@ -165,7 +165,7 @@ private fun MicButton(status: StandaloneStatus, onClick: () -> Unit) {
 }
 
 private fun statusLabel(status: StandaloneStatus): String = when (status) {
-    StandaloneStatus.IDLE -> "Tap to speak"
+    StandaloneStatus.IDLE -> "Tap to start"
     StandaloneStatus.LISTENING -> "Listening… tap to stop"
     StandaloneStatus.TRANSLATING -> "Translating…"
     StandaloneStatus.SPEAKING -> "Speaking translation…"
