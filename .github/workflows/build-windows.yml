@@ -27,6 +27,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install CPU-only PyTorch
+        # silero-vad's own dependency metadata requires torch/torchaudio,
+        # even though this project only ever uses its ONNX runtime export
+        # (never torch/GPU) - pinning the small CPU-only build here keeps
+        # this deterministic instead of relying on whatever pip's default
+        # wheel selection happens to be (see build-linux.yml for why this
+        # matters there: the default Linux wheel pulls in several GB of
+        # unused CUDA packages and exhausted that runner's disk).
+        run: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt

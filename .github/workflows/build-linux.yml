@@ -30,6 +30,21 @@ jobs:
       - name: Install system audio deps
         run: sudo apt-get update && sudo apt-get install -y libportaudio2 espeak-ng
 
+      - name: Free disk space
+        # ubuntu-latest ships several GB of preinstalled SDKs we don't use
+        # (.NET, Android, GHC) - free it before a heavy ML dependency install.
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+
+      - name: Install CPU-only PyTorch
+        # silero-vad's own dependency metadata requires torch/torchaudio,
+        # even though this project only ever uses its ONNX runtime export
+        # (never torch/GPU) - pip's default Linux wheel for torch pulls in
+        # the *entire* CUDA toolkit as separate multi-GB nvidia-* packages,
+        # which is what actually exhausted the runner's disk here. Installing
+        # the small CPU-only build first satisfies silero-vad's version
+        # bounds without pip ever reaching for the CUDA variant.
+        run: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
