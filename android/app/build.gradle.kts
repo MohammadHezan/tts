@@ -59,4 +59,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Standalone mode: on-device translation. Free, Apache-2.0, no server -
+    // android.speech.SpeechRecognizer and android.speech.tts.TextToSpeech
+    // used alongside it are both part of the Android SDK, no dependency needed.
+    implementation("com.google.mlkit:translate:17.0.3")
 }

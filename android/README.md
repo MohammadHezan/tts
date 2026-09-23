@@ -1,9 +1,43 @@
 # Interpreter - Android app
 
-Single-screen bidirectional interpreter client for the `engine/` WebSocket
-service: mic in, live captions + spoken translation out to your earbuds.
-Built for Galaxy Z Fold + Galaxy Buds 3 Pro, but works on any Android 12+
-(API 31+) phone.
+Talk into your phone, hear the translation back - no server required. The
+app opens in **Standalone mode** by default: on-device speech recognition,
+on-device translation, and the phone's own text-to-speech, entirely local
+after a one-time setup. **Engine mode** (talk to the `engine/` WebSocket
+service on your LAN for higher-quality, glossary/context-aware translation)
+is one tap away for when you want it. Built for Galaxy Z Fold + Galaxy Buds
+3 Pro, but works on any Android 12+ (API 31+) phone.
+
+## Standalone mode (default - no server, no Windows machine)
+
+This is the direct answer to "why do I need to connect to a server just to
+talk to my phone?" - you don't. Standalone mode is built entirely from
+on-device Android platform APIs:
+
+| Stage | API | Notes |
+|---|---|---|
+| Speech -> text | `android.speech.SpeechRecognizer` (`createOnDeviceSpeechRecognizer`) | Guaranteed on-device on API 31+, zero network |
+| Text -> text | ML Kit Translate (`com.google.mlkit:translate`) | Free, Apache-2.0, Google's on-device NMT; downloads a ~30MB model per language **once** (needs internet that one time), fully offline after |
+| Text -> speech | `android.speech.tts.TextToSpeech` | Built into every Android device, no download for English/Arabic |
+
+Source: `app/src/main/kotlin/com/interpreter/app/standalone/` -
+`OnDeviceSpeechRecognizer.kt`, `MlKitTranslator.kt`, `OnDeviceTts.kt`,
+`StandaloneViewModel.kt`, `StandaloneScreen.kt`.
+
+**How to use it:** pick which language you're about to speak (the chip row
+at the top), tap the mic, talk, tap again to stop (or just pause - the
+recognizer ends the turn on its own after a moment of silence). Your speech
+is transcribed, translated, and spoken back automatically. Tap "Engine mode"
+in the top bar to switch to the WebSocket client instead.
+
+**Trade-offs vs. Engine mode** - this is a deliberate simplicity-for-quality
+trade, not a bug:
+- You pick the speaker's language each turn; there's no automatic language
+  detection like the Whisper-based engine does.
+- Translation is generic ML Kit NMT - no glossary injection, no
+  conversation-context memory across turns.
+- First use of each language pair needs one internet connection to fetch its
+  ~30MB ML Kit model; every use after that is fully offline.
 
 ## Two modules, on purpose
 
@@ -41,6 +75,9 @@ build - see [Building](#building) below.
 
 ## What's in `:app` (written to spec, not compiled here)
 
+- `standalone/` - the default, server-free mode (see above): on-device ASR,
+  ML Kit translation, platform TTS, and the ViewModel/UI wiring them
+  together. No dependency on anything else in this repo.
 - `network/EngineWebSocketClient.kt` - OkHttp WebSocket client; every API call
   in it (`WebSocket.send(ByteString)`, `WebSocketListener` callback
   signatures, `ByteString.of(...)`) was checked against the real OkHttp/Okio
@@ -78,9 +115,10 @@ public API). Expect at most minor first-build fixups, not a rewrite.
    dependencies from Google's Maven repo automatically.
 4. Run on your Z Fold (USB debugging, or a Wi-Fi-connected device).
 
-## Connecting to your engine
+## Connecting to your engine (optional - Engine mode only)
 
-The app is a thin client - **it does not run ASR/translation/TTS itself**.
+Standalone mode (the default) needs none of this. Engine mode is a thin
+client to the Python engine - **it does not run ASR/translation/TTS itself**.
 Start the engine (see the root `README.md`) on a machine on the same network
 as your phone:
 
@@ -95,6 +133,8 @@ the engine machine) and tap Start.
 
 ## Permissions
 
-Requested on first launch: microphone (capture), Bluetooth (routing to the
-Buds), notifications (the foreground service's persistent "listening"
-notification, required by Android while it holds the mic in the background).
+Requested on first launch: microphone (capture, needed by both modes),
+Bluetooth (routing to the Buds, Engine mode only), notifications (Engine
+mode's foreground service's persistent "listening" notification, required by
+Android while it holds the mic in the background). Standalone mode never
+starts that foreground service, so it never shows that notification.

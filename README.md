@@ -322,18 +322,21 @@ deployment, put a reverse proxy (Caddy, nginx) with a real certificate
 
 ## Native apps
 
-Two ways to connect to the same engine now: the [web client](#web-client-any-device-any-platform)
-(any device, zero install - use this for the Australian counterpart, or
-anyone without a Galaxy phone) and a native Android app (best latency/UX on
-your own Z Fold + Buds 3 Pro, via LE Audio routing the browser can't control).
-
 **Android app is in `android/`** - see `android/README.md` for full details.
-Single-screen Kotlin/Compose client: mic in, live captions + spoken
-translation out to your earbuds, with explicit LE Audio (LC3) routing
-preference for the Buds 3 Pro (see "How Samsung does it" below for why that
-matters). It's a thin client - it connects to this repo's `engine/` over
-WebSocket rather than running models on-device, so it works from any phone
-on the same network as a machine running the engine.
+It opens in **Standalone mode** by default: talk into the phone, it
+transcribes, translates, and speaks the translation back, using only
+on-device Android platform APIs (`SpeechRecognizer`, ML Kit Translate,
+`TextToSpeech`). No server, no Windows/laptop machine, no network dependency
+beyond one one-time per-language model download. This is the mode for "I
+talk to it and it responds in another language" with nothing else running.
+
+**Engine mode** is one tap away in the same app for when you want it: a thin
+WebSocket client to this repo's `engine/` (domain-tuned glossary, multi-turn
+context memory, LE Audio (LC3) routing preference for the Buds 3 Pro - see
+"How Samsung does it" below). Trade higher quality for needing a machine on
+the same network running the engine. The [web client](#web-client-any-device-any-platform)
+(any device, zero install) talks to that same engine too - use it for the
+Australian counterpart, or anyone without a Galaxy phone.
 
 Split into two Gradle modules on purpose: `android/core/` (pure Kotlin, no
 Android dependency - the wire protocol, conversation state, audio framing)
@@ -385,9 +388,13 @@ Verified end-to-end in a real Chromium instance via Playwright
 (`scripts/verify_web_client.py`), which caught and led to fixing a real
 cross-client base64-encoding bug (see "Web client" above).
 
-**Done (Android, this delivery):** Kotlin/Compose single-screen app, WS
-client, mic capture + earbud playback, LE Audio routing preference,
-foreground service, 11 real passing unit tests in `:core`.
+**Done (Android, this delivery):** Kotlin/Compose app with two modes -
+**Standalone** (default: on-device `SpeechRecognizer` + ML Kit Translate +
+`TextToSpeech`, no server) and **Engine** (WS client, mic capture + earbud
+playback, LE Audio routing preference, foreground service). Both modes build
+as a real debug APK on GitHub Actions CI (`.github/workflows/build-android.yml`,
+`ubuntu-latest`, unrestricted `dl.google.com` access unlike this sandbox);
+`:core` additionally has 11 real passing unit tests run in this sandbox.
 
 **Not yet built**: iOS app, foldable UX (split view / Flex mode / cover
 screen), desktop meeting mode (system audio loopback + overlay + virtual
@@ -430,7 +437,10 @@ Kokoro/Piper quality and latency, real Ollama/Claude translation quality, and
 live mic capture + earbud playback. Run `python -m bench.benchmark --with-audio`
 on your target machine (after downloading the models above) for real numbers
 against the <=2s caption / <=3.5s audio budgets, and `cli/translate_mic.py`
-to hear it end to end.
+to hear it end to end. Android Standalone mode's actual recognition/
+translation/speech quality on-device (as opposed to it compiling and the APK
+installing) also needs your Z Fold - it depends on the on-device speech model
+and ML Kit language pack Google ships for your exact device/region.
 
 ---
 

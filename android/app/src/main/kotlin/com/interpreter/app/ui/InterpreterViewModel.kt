@@ -26,6 +26,7 @@ class InterpreterViewModel(application: Application) : AndroidViewModel(applicat
 
     private var service: InterpreterForegroundService? = null
     private var isBound = false
+    private var bindRequested = false
 
     private val _conversationState = MutableStateFlow(ConversationState())
     val conversationState: StateFlow<ConversationState> = _conversationState.asStateFlow()
@@ -51,7 +52,15 @@ class InterpreterViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /**
+     * Starts and binds the engine foreground service. Only called when the
+     * user actually opens Engine mode - standalone mode (the default) must
+     * never spin up this service or its persistent notification, since it
+     * exists purely to talk to an optional external engine over WebSocket.
+     */
     fun bindService() {
+        if (bindRequested) return
+        bindRequested = true
         val context = getApplication<Application>()
         val intent = Intent(context, InterpreterForegroundService::class.java)
         ContextCompat.startForegroundService(context, intent)
@@ -63,6 +72,7 @@ class InterpreterViewModel(application: Application) : AndroidViewModel(applicat
             getApplication<Application>().unbindService(connection)
             isBound = false
         }
+        bindRequested = false
     }
 
     fun setEngineUrl(url: String) {
