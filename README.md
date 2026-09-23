@@ -11,6 +11,28 @@ and a Kotlin/Compose Android client with LE Audio routing for the Buds 3 Pro.
 Native iOS, foldable UX, and desktop meeting mode are **not** in this
 delivery - see [Status](#status) and [Native apps](#native-apps).
 
+## Download prebuilt (Windows + Android)
+
+Built by CI on real Windows/Linux runners (this repo's own dev environment
+can't cross-compile either) - see `.github/workflows/`.
+
+1. Go to the **Actions** tab: [Windows build](https://github.com/MohammadHezan/tts/actions/workflows/build-windows.yml) / [Android build](https://github.com/MohammadHezan/tts/actions/workflows/build-android.yml)
+2. Open the latest run with a green check
+3. Scroll to **Artifacts** at the bottom and download:
+   - **`interpreter-windows`** → unzip, run `Interpreter.exe`. It starts the
+     engine and opens the web client in your browser automatically. First
+     launch: Windows SmartScreen will warn "unknown publisher" (unsigned
+     binary) - click "More info" → "Run anyway".
+   - **`interpreter-android-debug`** → unzip, install the `.apk` on your
+     phone. It's a debug build (not on Play Store), so Android will ask you
+     to allow "install from unknown sources" once.
+
+Requires being signed into GitHub with access to this (private) repo to
+download either artifact. Both need the Windows machine and phone on the
+same network as whichever one is actually running the engine - see
+[Run it](#run-it) for what still needs setting up (Ollama, TTS voices) before
+either app does anything beyond captions.
+
 ## Project tree
 
 ```
