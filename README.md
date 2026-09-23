@@ -7,9 +7,11 @@ output, a CLI test harness (WAV + live mic, with a working
 listen→translate→speak loop), a latency/WER/audio-budget benchmark, a
 zero-install **browser client that runs on literally any device** (Windows,
 Mac, Linux, iPhone, Android - see [Web client](#web-client-any-device-any-platform)),
-and a Kotlin/Compose Android client with LE Audio routing for the Buds 3 Pro.
-Native iOS, foldable UX, and desktop meeting mode are **not** in this
-delivery - see [Status](#status) and [Native apps](#native-apps).
+a Kotlin/Compose Android client with LE Audio routing for the Buds 3 Pro,
+and **Call mode**: live two-way translation running inside an actual
+Zoom/Google Meet call on Windows/Linux (see [Call mode](#call-mode-windowslinux--zoommeet)).
+Native iOS and foldable UX are **not** in this delivery - see
+[Status](#status) and [Native apps](#native-apps).
 
 ## Download prebuilt (Windows + Linux + Android)
 
@@ -38,20 +40,10 @@ Windows and Linux both build from the exact same `engine/desktop_launcher.spec`
 Requires being signed into GitHub with access to this (private) repo to
 download any artifact.
 
-**Using the Windows/Linux build during a Zoom call to test it**: this is a
-fully local desktop app - the engine runs on that same machine, nothing else
-to connect to (see [Run it](#run-it) for what still needs setting up: Ollama,
-TTS voices - the app runs but only produces captions, no spoken audio, until
-those are in place). To actually hear the translation *through* a Zoom call
-today: run it with your normal speakers (not headphones) so Zoom's own
-microphone physically picks up what the app speaks out loud - crude but
-genuinely works for testing/demoing. Piping the translated audio directly
-into Zoom as a virtual microphone (so it's clean, no echo, no speaker/mic
-round-trip) is a real upgrade (a virtual audio cable - VB-Cable on Windows,
-a PipeWire/PulseAudio null-sink on Linux) but isn't wired up yet - say the
-word if you want that built next.
-The Android app needs neither of this - see [Standalone mode](android/README.md#standalone-mode-default---no-server-no-windows-machine),
-which runs with no engine at all.
+**Live two-way translation inside an actual Zoom/Google Meet call**: see
+[Call mode (Windows/Linux + Zoom/Meet)](#call-mode-windowslinux--zoommeet)
+below. Android **cannot** do this - see that section's "Why not Android"
+note before asking why.
 
 ## Project tree
 
@@ -94,6 +86,7 @@ tts/
 │   ├── cli/
 │   │   ├── translate_wav.py    # python -m cli.translate_wav --file audio.wav
 │   │   ├── translate_mic.py    # python -m cli.translate_mic  (live bidirectional loop)
+│   │   ├── translate_call.py   # python -m cli.translate_call (two-way Zoom/Meet call mode)
 │   │   ├── audio_playback.py   # sequential TTS playback helper
 │   │   └── formatting.py
 │   ├── bench/
@@ -368,11 +361,11 @@ written carefully against verified real APIs (every uncertain OkHttp/Okio
 call was checked against the actual downloaded jars, not guessed) but needs
 Android Studio on your machine to compile and run on the Z Fold.
 
-**iOS and desktop meeting mode are not built yet.** iOS wasn't in the
-original spec, and building it needs Xcode/macOS - this sandbox is Linux and
-physically cannot compile Swift regardless of priority. Recommended order
-once Android is proven on your hardware: Desktop (Phase 5 - system audio
-loopback + overlay), then iOS.
+**iOS is not built yet** - it wasn't in the original spec, and building it
+needs Xcode/macOS, which this Linux sandbox physically cannot run regardless
+of priority. Desktop meeting mode (live two-way translation inside an actual
+Zoom/Google Meet call) **is** built - see [Call mode](#call-mode-windowslinux--zoommeet)
+below.
 
 **Bluetooth reality, unchanged**: Android/iOS cannot capture audio already
 flowing over Bluetooth (calls, media) - only the phone's own mic or an
@@ -380,6 +373,92 @@ earbud's mic input. The app's job is exactly what `cli/translate_mic.py`
 already proved: capture mic input, run it through the engine, play translated
 audio back out to the Buds. The CLI validated that audio routing model before
 any native code was written.
+
+## Call mode (Windows/Linux + Zoom/Meet)
+
+Two live translation directions running at once, so you speak your language
+and the other person hears the translation *through the actual call* - and
+whatever they say comes back to you translated too. `cli/translate_call.py`
+runs two complete, independent pipelines concurrently (each its own VAD/ASR/
+translator/TTS - `AsrProvider` is explicitly one-instance-per-pipeline, so
+each direction needs its own):
+
+```
+OUTGOING:  your real mic  -> translate -> virtual cable's input  -> Zoom/Meet reads this as "your Microphone"
+INCOMING:  Zoom/Meet's own audio output -> translate -> your real headphones/speakers
+```
+
+This works with **zero special integration with Zoom or Meet** - both already
+let you pick any input/output device for a call, and as far as either app is
+concerned, our translated audio is just another microphone. The only thing
+you need to install is one *virtual audio cable* (a device that exists purely
+to pipe audio from one app to another on the same machine):
+
+**Windows:**
+1. Install [VB-CABLE](https://vb-audio.com/Cable/) (free) - adds a device pair
+   named "CABLE Input" / "CABLE Output".
+2. In Zoom/Meet's audio settings, set **Microphone → CABLE Input**. Leave
+   Speaker as your real headphones/speakers - untouched.
+3. Run `python -m cli.translate_call --list-devices` and note the index for:
+   your real mic, "CABLE Input" (that's `--mic-out-device`), your real
+   speakers/headphones (`--speaker-device`), and a **WASAPI loopback**
+   device for your speakers (`--loopback-device` - `sounddevice` exposes
+   this as an input-capable entry for your output device; look for your
+   speaker/headphone name appearing in the input list too - that's the
+   loopback capture of whatever Zoom/Meet is actually playing, no cable
+   needed for this direction).
+
+**Linux (PipeWire/PulseAudio - no install needed, it's already there):**
+1. Create a null-sink to act as the virtual cable:
+   `pactl load-module module-null-sink sink_name=interpreter_mic sink_properties=device.description=interpreter_mic`
+2. In Zoom/Meet's audio settings, set **Microphone → interpreter_mic** (or
+   "Monitor of interpreter_mic" depending on how your app lists it). Leave
+   Speaker as your real output - untouched.
+3. Run `python -m cli.translate_call --list-devices`. `--mic-out-device` is
+   `interpreter_mic`. `--loopback-device` is your real output device's
+   **monitor** source (PipeWire/PulseAudio exposes one for every sink
+   automatically, listed as "Monitor of \<your speakers\>" - no null-sink
+   needed for this direction, that's what a monitor source already is).
+
+Then, both OSes:
+
+```bash
+cd engine
+python -m cli.translate_call \
+    --mic-device <your real mic> \
+    --mic-out-device <virtual cable input> \
+    --loopback-device <your speaker's monitor/loopback> \
+    --speaker-device <your real speakers/headphones>
+```
+
+Needs the same one-time setup as any engine run (Ollama or a Claude API key,
+TTS voices - see [Setup](#setup)/[Run it](#run-it)) - `cli/translate_call.py`
+is a thin wrapper around the exact same `Pipeline` used everywhere else in
+this repo, just run twice concurrently against different devices. Running
+two directions at once roughly doubles CPU/RAM use versus a single
+`cli/translate_mic.py` session (two full ASR models loaded, not one) - if
+your machine can't keep up in real time, set a smaller `asr.model` in
+`config.yaml` (e.g. `small` or `base` instead of `large-v3-turbo`).
+
+**Not yet wired into the desktop `.exe`/binary launcher or a GUI** - this is
+a CLI harness today (device indices, not a dropdown), the same tier of
+"proven, not yet polished" as `cli/translate_mic.py` was before the web
+client existed. A proper Call mode screen in the web UI (device pickers
+instead of `--list-devices` + copy-pasted indices) is the natural next step
+if this proves out for you.
+
+**Why not Android**: this whole design works because Zoom/Meet on desktop
+let *any* app register as an input/output device, and OS-level virtual audio
+cables are a normal, sanctioned thing to install. Neither is true on
+Android - `AudioPlaybackCaptureConfiguration` (the API for one app to record
+another app's audio) explicitly excludes `USAGE_VOICE_COMMUNICATION` streams
+(calls/VoIP - exactly what Zoom/Meet use) by OS policy, and there is no
+mechanism at all for a third-party app to act as another app's microphone
+without root. That's not a gap in this project, it's Android deliberately
+not allowing what this feature does - the same protection that stops a
+malicious app from silently recording your calls. Android's own live
+translation (Standalone mode, see [Native apps](#native-apps)) works great
+for talking to the phone directly; it can't reach into Zoom/Meet's audio.
 
 ## How Samsung's Interpreter mode gets so fast (and what we borrowed)
 
@@ -429,11 +508,30 @@ simplified on-device stand-in like Android's standalone mode) into a
 double-click desktop app via PyInstaller, for both Windows and Linux from
 the one spec file. CI-built and verified green on real `windows-latest` and
 `ubuntu-latest` runners (`.github/workflows/build-windows.yml`,
-`build-linux.yml`) - see "Download prebuilt" above.
+`build-linux.yml`) - see "Download prebuilt" above. One real bug caught and
+fixed by that CI: `silero-vad`'s own package metadata pulls in `torch`, and
+pip's default Linux wheel for `torch` drags in the full CUDA toolkit as
+several GB of unused `nvidia-*` packages, which exhausted the Linux runner's
+disk - fixed by pinning the CPU-only PyTorch build on both platforms (this
+project never uses torch directly, only silero-vad's ONNX runtime export).
+
+**Done (call mode, this delivery):** `engine/cli/translate_call.py` runs two
+concurrent `Pipeline` instances against different audio devices - a virtual
+cable feeding Zoom/Meet's microphone input, and a loopback capture of
+Zoom/Meet's own output audio - for live two-way translation inside an actual
+call, with no special integration with either app (see
+[Call mode](#call-mode-windowslinux--zoommeet)). Not runnable in this
+sandbox (no audio hardware, same constraint as `translate_mic.py`); verified
+here via module import, argparse/`--list-devices`/`--help` execution, and
+by construction - it reuses `Pipeline`/`AudioPlayer`/the provider factories
+unchanged, just wired to two devices instead of one, the same pattern
+`translate_mic.py` already uses for a single direction. Android **cannot**
+do this - it's an OS-level restriction, not a missing feature; see that
+section's "Why not Android."
 
 **Not yet built**: iOS app, foldable UX (split view / Flex mode / cover
-screen), desktop meeting mode (system audio loopback + overlay + virtual
-mic), Docker, CI.
+screen), a GUI for call mode (device dropdowns instead of `--list-devices` +
+copied indices), Docker, CI for the Python test suite itself.
 
 ## Validation notes: what was and wasn't run here
 
