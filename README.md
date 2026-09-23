@@ -462,7 +462,12 @@ never leaves the server), and the dashboard at `/bot.html`.
    `http://192.168.1.50:8765` → paste the link → send. Same bot, same captions.
 
 The Docker translator is CPU-only (`deploy/config.docker.yaml`: Whisper
-`small`, int8). With a GPU, run the translator natively instead (`uvicorn
+`small`, int8). With an NVIDIA GPU, the quickest win is putting the translation
+model (the slowest step on CPU) on it:
+`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build`
+(needs Docker GPU support - see the comments in `docker-compose.gpu.yml`; the
+file is validated with `docker compose config` but has not been run on a GPU).
+For Whisper on the GPU as well, run the translator natively instead (`uvicorn
 app.server:app --host 0.0.0.0 --port 8765` from `engine/`, repo-root
 `config.yaml` with `large-v3-turbo`) and point `ATTENDEE_CALLBACK_WS_URL` at
 it - the dashboard and bridge are part of the same server, so the Windows/Linux
