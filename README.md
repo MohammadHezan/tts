@@ -540,10 +540,15 @@ What the simulation found and fixed, and what it still shows:
   system prompt changed with every direction flip.
 - **Still weak: Arabic speech recognition with Whisper `small`** (the Docker
   default). It heard "الكنب" (sofas) as noise, hence "furniture" above, and got
-  "نستطيع" slightly wrong. English recognition was word-perfect. A bigger Whisper
-  hears Arabic better (`asr.model` in `deploy/config.docker.yaml`, then rebuild),
-  at the cost of CPU time. The speakers here are synthetic voices; real voices
-  may do better or worse.
+  "نستطيع" slightly wrong. English recognition was word-perfect. Whisper
+  `medium` (same run, `whisper_model: medium`) heard the sofas sentence
+  perfectly, but misheard "ثلاثة" (three), and the bot said "a fortnight" for
+  three weeks. The check caught it and failed the run. It was also ~3x slower on
+  CPU (11-19s per sentence instead of ~4s, median delay 23s instead of 13s), so
+  `small` stays the CPU default. With an NVIDIA GPU, run the translator natively
+  with `large-v3-turbo` (see above). The speakers here are synthetic voices
+  (Omar's is Piper's lower-quality Arabic voice); real voices may do better or
+  worse.
 - **Delay on CPU only:** about 12-14s from when someone stops talking to when
   the other side hears the translation. The first sentence took ~35s while the
   model was still loading. The split is Whisper ~4s, translation ~6-7s,
