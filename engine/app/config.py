@@ -64,6 +64,11 @@ class AsrConfig(BaseModel):
     device: Literal["auto", "cuda", "cpu"] = "auto"
     compute_type: str = "auto"
     language: str = "auto"
+    # With language: auto, only these languages are considered (the most likely
+    # of them wins). Empty = anything Whisper knows. Stops a short English turn
+    # being "detected" as Dutch, or Jordanian Arabic as Persian, which would
+    # flip the translation direction the wrong way.
+    candidate_languages: list[str] = Field(default_factory=list)
     beam_size: int = 1
     local_agreement: LocalAgreementConfig = Field(default_factory=LocalAgreementConfig)
 
@@ -72,6 +77,10 @@ class OllamaConfig(BaseModel):
     base_url: str = "http://localhost:11434"
     model: str = "llama3.1:8b-instruct-q4_K_M"
     timeout_s: float = 15.0
+    # How long Ollama keeps the model in memory after a request. Its own default
+    # (5m) unloads it during a quiet stretch of a meeting, and reloading an 8B
+    # model on CPU adds tens of seconds to the next sentence.
+    keep_alive: str = "30m"
 
 
 class ClaudeConfig(BaseModel):

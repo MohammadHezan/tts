@@ -36,8 +36,12 @@ class Pipeline:
         asr: AsrProvider,
         translator: TranslatorProvider,
         tts: TtsProvider | None = None,
+        emit_partials: bool = True,
     ) -> None:
         self._cfg = cfg
+        # Partials only feed live captions. A meeting bot never shows them, and
+        # on CPU each re-decode steals the time the final transcript needs.
+        self._emit_partials = emit_partials
         self._asr = asr
         self._translator = translator
         self._tts = tts
@@ -60,6 +64,8 @@ class Pipeline:
 
         # While an utterance is open, opportunistically run a local-agreement
         # partial decode (internally gated by asr.local_agreement.chunk_ms).
+        if not self._emit_partials:
+            return
         audio_so_far = self._vad.current_utterance_audio()
         if audio_so_far is not None and self._turn_id is not None:
             async for event in self._maybe_partial(audio_so_far):
@@ -109,8 +115,14 @@ class Pipeline:
         assert tracker is not None
         self._speech_end_perf = time.perf_counter()
 
-        with tracker.stage("asr_final"):
-            hyp = await self._asr.finalize(vad_event.audio)
+        try:
+            with tracker.stage("asr_final"):
+                hyp = await self._asr.finalize(vad_event.audio)
+        except Exception as error:
+            yield self._error_event(self._cfg.translator.source_lang, turn_id, "transcription", error)
+            self._turn_id = None
+            self._tracker = None
+            return
         yield self._event(
             EventType.FINAL,
             hyp.language,
@@ -130,8 +142,18 @@ class Pipeline:
             translated_sentences: list[str] = []
             context = list(self._context)
             for i, sentence in enumerate(segment_sentences(hyp.text)):
-                with tracker.stage(f"translate[{i}]"):
-                    translated = await self._translator.translate(sentence, source_lang, target_lang, context=context)
+                # One slow or failed sentence (an Ollama timeout, a TTS hiccup)
+                # becomes an ERROR event, not an exception: raised, it would end
+                # the caller's session - a meeting bot would go deaf for the
+                # rest of the call over one sentence.
+                try:
+                    with tracker.stage(f"translate[{i}]"):
+                        translated = await self._translator.translate(
+                            sentence, source_lang, target_lang, context=context
+                        )
+                except Exception as error:
+                    yield self._error_event(target_lang, turn_id, "translation", error)
+                    continue
                 translated_sentences.append(translated)
                 yield self._event(
                     EventType.TRANSLATION,
@@ -143,8 +165,12 @@ class Pipeline:
                 )
 
                 if self._tts is not None:
-                    with tracker.stage(f"tts[{i}]"):
-                        audio = await self._tts.synthesize(translated, target_lang)
+                    try:
+                        with tracker.stage(f"tts[{i}]"):
+                            audio = await self._tts.synthesize(translated, target_lang)
+                    except Exception as error:
+                        yield self._error_event(target_lang, turn_id, "speech", error)
+                        continue
                     yield self._event(
                         EventType.AUDIO,
                         target_lang,
@@ -163,6 +189,13 @@ class Pipeline:
         log_event(_LOGGER, logging.INFO, "turn_complete", turn_id=turn_id, **tracker.as_dict())
         self._turn_id = None
         self._tracker = None
+
+    def _error_event(self, lang: str, turn_id: str, stage: str, error: Exception) -> PipelineEvent:
+        detail = f"{stage} failed: {type(error).__name__}: {error}".rstrip(": ")
+        log_event(_LOGGER, logging.ERROR, "pipeline_stage_failed", turn_id=turn_id, stage=stage, error=detail)
+        event = self._event(EventType.ERROR, lang, "", self._elapsed_since_speech_end_ms(), turn_id=turn_id)
+        event.error = detail
+        return event
 
     def _elapsed_since_speech_end_ms(self) -> float:
         if self._speech_end_perf is None:

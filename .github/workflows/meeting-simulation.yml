@@ -1,0 +1,112 @@
+# The real interpreter in a simulated two-device call - see
+# engine/scripts/simulate_meeting.py. Runs the actual docker compose stack
+# with real models (Whisper, Ollama llama3.1 8B, Kokoro, Piper), exactly as
+# the README's "Test it now" sets it up; only Zoom/Meet + Attendee are
+# stood in for. The report lands on the run page; recordings of what each
+# device heard are in the `meeting-simulation` artifact.
+name: Meeting Simulation (2 devices, real models)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/arabic-english-speech-translation-72v8pb]
+    paths:
+      - "engine/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - "Dockerfile"
+      - "glossary.yaml"
+      - ".github/workflows/meeting-simulation.yml"
+
+concurrency:
+  group: meeting-simulation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest # 4 vCPU / 16GB, no GPU - a CPU-only PC, like the Docker config assumes
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space (images + ~5GB translation model + voices)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Download voices - the bot's (models/) and the two speakers' (sim-voices/)
+        run: |
+          set -euo pipefail
+          mkdir -p models sim-voices
+          dl() { curl -fL --retry 4 --retry-delay 5 -o "$2" "$1"; }
+          KOKORO=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
+          dl "$KOKORO/kokoro-v1.0.onnx" models/kokoro-v1.0.onnx
+          dl "$KOKORO/voices-v1.0.bin" models/voices-v1.0.bin
+          PIPER=https://huggingface.co/rhasspy/piper-voices/resolve/main
+          for f in ar_JO-kareem-medium.onnx ar_JO-kareem-medium.onnx.json; do dl "$PIPER/ar/ar_JO/kareem/medium/$f" "models/$f"; done
+          # The people in the call get their own voices, not the bot's.
+          for f in ar_JO-kareem-low.onnx ar_JO-kareem-low.onnx.json; do dl "$PIPER/ar/ar_JO/kareem/low/$f" "sim-voices/$f"; done
+          for f in en_US-lessac-medium.onnx en_US-lessac-medium.onnx.json; do dl "$PIPER/en/en_US/lessac/medium/$f" "sim-voices/$f"; done
+          ls -la models sim-voices
+
+      - name: Configure the translator (.env, as in the README)
+        run: |
+          LAN_IP=$(hostname -I | awk '{print $1}')
+          cat > .env <<EOF
+          ATTENDEE_BASE_URL=http://host.docker.internal:8796
+          ATTENDEE_API_KEY=sim-key
+          ATTENDEE_CALLBACK_WS_URL=ws://${LAN_IP}:8765/attendee/ws
+          EOF
+          cat .env
+
+      - name: docker compose up -d --build
+        run: docker compose up -d --build
+
+      - name: Wait for the translator (first run pulls the ~4.9GB translation model)
+        run: |
+          for i in $(seq 1 180); do
+            if curl -fsS http://localhost:8765/healthz; then echo; docker compose ps; exit 0; fi
+            sleep 10
+          done
+          docker compose ps
+          docker compose logs --tail 200
+          exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the host side (the two devices, the listener check, a browser)
+        run: |
+          pip install fastapi "uvicorn[standard]" "websockets>=13,<15" httpx numpy soundfile \
+            piper-tts faster-whisper jiwer playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run the two-device meeting
+        working-directory: engine
+        run: |
+          python -u -m scripts.simulate_meeting \
+            --engine-url http://localhost:8765 --api-key sim-key \
+            --voices-dir ../sim-voices --dashboard --out ../sim-output \
+            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper small (CPU, int8), Ollama llama3.1 8B q4 (CPU), Kokoro EN + Piper AR voices" \
+            --info "Machine=GitHub ubuntu-latest runner: 4 vCPU, 16GB RAM, no GPU"
+
+      - name: Collect the translator's logs
+        if: always()
+        run: |
+          mkdir -p sim-output
+          docker compose logs --no-color > sim-output/docker-compose.log 2>&1 || true
+          grep -E "pipeline_stage_failed|turn_complete|attendee_bot|Traceback|Error" sim-output/docker-compose.log | tail -60 || true
+
+      - name: Put the report on the run page
+        if: always()
+        run: |
+          if [ -f sim-output/report.md ]; then cat sim-output/report.md >> "$GITHUB_STEP_SUMMARY"
+          else echo "No report was produced - see the job log." >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: meeting-simulation
+          path: sim-output/
+          retention-days: 30

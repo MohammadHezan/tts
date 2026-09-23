@@ -55,6 +55,7 @@ class _UtteranceSession:
     confirmed_samples: int = 0
     last_hyp_words: list[str] = field(default_factory=list)
     last_decoded_total_samples: int = 0
+    language: str | None = None  # picked once per utterance from candidate_languages
 
 
 class FasterWhisperAsr(AsrProvider):
@@ -119,9 +120,14 @@ class FasterWhisperAsr(AsrProvider):
 
     def _decode_words(self, audio_int16: np.ndarray) -> tuple[list, str]:
         """Word-level decode (word_timestamps=True), used for local-agreement partials."""
+        session = self._session
+        audio = pcm16_to_float32(audio_int16)
+        language = session.language if session is not None and session.language else self._resolved_language(audio)
+        if session is not None:
+            session.language = language
         segments, info = self._model.transcribe(
-            pcm16_to_float32(audio_int16),
-            language=self._resolved_language(),
+            audio,
+            language=language,
             beam_size=self._cfg.beam_size,
             word_timestamps=True,
         )
@@ -130,14 +136,23 @@ class FasterWhisperAsr(AsrProvider):
 
     def _decode_text(self, audio_int16: np.ndarray) -> tuple[str, str]:
         """Plain segment-level decode, used for the authoritative final transcript."""
+        audio = pcm16_to_float32(audio_int16)
         segments, info = self._model.transcribe(
-            pcm16_to_float32(audio_int16),
-            language=self._resolved_language(),
+            audio,
+            language=self._resolved_language(audio),  # re-picked on the whole utterance
             beam_size=self._cfg.beam_size,
             word_timestamps=False,
         )
         text = "".join(seg.text for seg in segments).strip()
         return text, info.language
 
-    def _resolved_language(self) -> str | None:
-        return None if self._cfg.language == "auto" else self._cfg.language
+    def _resolved_language(self, audio: np.ndarray) -> str | None:
+        """The language to decode in: fixed by config, the likeliest candidate, or
+        None to let Whisper pick from every language it knows."""
+        if self._cfg.language != "auto":
+            return self._cfg.language
+        if not self._cfg.candidate_languages:
+            return None
+        _, _, all_probs = self._model.detect_language(audio=audio)
+        probs = dict(all_probs)
+        return max(self._cfg.candidate_languages, key=lambda lang: probs.get(lang, 0.0))

@@ -15,8 +15,18 @@ const turnsEl = document.getElementById('turns');
 
 const LAST_BOT_KEY = 'interpreter.lastBotId';
 const FINISHED_STATES = new Set(['ended', 'fatal_error']);
+const STATE_HINTS = {
+  joining: 'Bot is joining - admit it from the meeting\'s waiting room if the host has one.',
+  waiting_room: 'Bot is in the waiting room - admit it from the meeting.',
+  joined_not_recording: 'Bot is in the meeting. Everyone in the call will hear its translations.',
+  joined_recording: 'Bot is in the meeting. Everyone in the call will hear its translations.',
+  leaving: 'Bot is leaving the meeting.',
+  ended: 'Bot has left the meeting.',
+  fatal_error: 'Bot could not stay in the meeting - Attendee\'s own dashboard has the reason.',
+};
 
 let botId = null;
+let hintedState = null;
 let eventsSocket = null;
 let pollTimer = null;
 const turnEls = new Map();
@@ -132,7 +142,8 @@ function onPipelineEvent(event) {
   } else if (event.type === 'translation' && event.text) {
     appendLine(turnEl(event.turn_id), 'said-tag', `Bot said (${event.lang})`, 'translation', event.text);
   } else if (event.type === 'error') {
-    hintEl.textContent = `Pipeline error: ${event.text}`;
+    // One sentence failed (e.g. a translation timeout); the bot carries on.
+    appendLine(turnEl(event.turn_id), 'error-tag', 'Could not interpret this', 'error-text', event.error || 'unknown error');
   }
 }
 
@@ -151,6 +162,10 @@ async function pollState() {
     const bot = await api('GET', `/api/bots/${encodeURIComponent(botId)}`);
     const state = bot.state || 'unknown';
     setStatus(`Bot: ${state}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
+    if (state !== hintedState && STATE_HINTS[state]) {
+      hintEl.textContent = STATE_HINTS[state];
+      hintedState = state;
+    }
     if (FINISHED_STATES.has(state)) stopTracking();
   } catch (err) {
     setStatus('Bot: status unavailable', 'error');
@@ -160,6 +175,7 @@ async function pollState() {
 
 function track(id) {
   botId = id;
+  hintedState = null;
   remember(id);
   removeBtn.hidden = false;
   sendBtn.disabled = true;

@@ -159,17 +159,28 @@ async def attendee_bridge(ws: WebSocket) -> None:
         await ws.close(code=1008)
         return
     await ws.accept()
+    # Load the translation model while the bot is still being admitted, so the
+    # first sentence of the meeting doesn't also pay for it.
+    warm_up = asyncio.create_task(_warm_up_translator())
     # AsrProvider holds per-utterance state, so each bot gets its own instance;
     # constructing one loads the ASR model, which must not block the event loop.
     asr = await asyncio.to_thread(build_asr_provider, _cfg.asr)
     frame_bytes = _cfg.audio.frame_samples * 2
     await run_bridge(
         ws,
-        lambda: Pipeline(_cfg, asr, _translator, _tts),
+        lambda: Pipeline(_cfg, asr, _translator, _tts, emit_partials=False),
         _cfg.audio.sample_rate_hz,
         frame_bytes,
         _bot_hub,
     )
+    warm_up.cancel()
+
+
+async def _warm_up_translator() -> None:
+    try:
+        await _translator.translate("Hello.", _cfg.translator.source_lang, _cfg.translator.target_lang)
+    except Exception as error:  # the real first sentence will surface a persistent failure
+        log_event(_logger, logging.WARNING, "translator_warm_up_failed", error=repr(error))
 
 
 @app.websocket("/ws")

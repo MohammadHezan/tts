@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.audio_utils import iter_frames, load_wav_as_pcm16_mono
@@ -205,3 +206,46 @@ async def test_ar_to_en_direction_resolves_correctly(
     assert final_event.lang == "ar"
     assert translation_event.lang == "en"
     assert translator.calls[-1] == text
+
+
+class _TimingOutTranslator(FakeTranslator):
+    """Fails the first call the way a slow Ollama does, then recovers."""
+
+    async def translate(self, text: str, source_lang: str, target_lang: str, context=None) -> str:  # type: ignore[no-untyped-def]
+        if not self.calls:
+            self.calls.append(text)
+            raise httpx.ReadTimeout("")
+        return await super().translate(text, source_lang, target_lang, context)
+
+
+async def test_failed_translation_is_an_error_event_and_the_next_turn_still_works(
+    engine_cfg: EngineConfig, synthesized_wav: Callable[[str], Path]
+) -> None:
+    # Raised instead, it ended the caller's session: a meeting bot went deaf
+    # for the rest of the call after one slow translation.
+    translator = _TimingOutTranslator()
+    pipeline = Pipeline(engine_cfg, FakeAsr(final_text="First sentence here."), translator, FakeTts())
+
+    _, first = await _run_wav_through_pipeline(
+        engine_cfg, None, None, synthesized_wav("First sentence here."), pipeline=pipeline  # type: ignore[arg-type]
+    )
+    errors = [e for e in first if e.type is EventType.ERROR]
+    assert len(errors) == 1
+    assert errors[0].error == "translation failed: ReadTimeout"
+    assert not any(e.type in (EventType.TRANSLATION, EventType.AUDIO) for e in first)
+
+    _, second = await _run_wav_through_pipeline(
+        engine_cfg, None, None, synthesized_wav("Second sentence here."), pipeline=pipeline  # type: ignore[arg-type]
+    )
+    assert [e.text for e in second if e.type is EventType.TRANSLATION] == ["[AR] First sentence here."]
+    assert any(e.type is EventType.AUDIO for e in second)
+
+
+async def test_pipeline_without_partials_still_transcribes(
+    engine_cfg: EngineConfig, synthesized_wav: Callable[[str], Path]
+) -> None:
+    text = "Meeting bots skip partial captions."
+    pipeline = Pipeline(engine_cfg, FakeAsr(final_text=text), FakeTranslator(), emit_partials=False)
+    _, events = await _run_wav_through_pipeline(engine_cfg, None, None, synthesized_wav(text), pipeline=pipeline)  # type: ignore[arg-type]
+    assert not any(e.type is EventType.PARTIAL for e in events)
+    assert [e.text for e in events if e.type is EventType.FINAL] == [text]

@@ -38,6 +38,7 @@ class OllamaTranslator(TranslatorProvider):
                 "model": self._cfg.ollama.model,
                 "messages": messages,
                 "stream": False,
+                "keep_alive": self._cfg.ollama.keep_alive,
                 "options": {"temperature": 0.2},
             },
         )

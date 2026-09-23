@@ -30,6 +30,7 @@ asr:
   device: auto # auto | cuda | cpu
   compute_type: auto # auto -> float16 on GPU, int8 on CPU
   language: auto # auto-detect ar/en - this is what makes the pipeline bidirectional
+  candidate_languages: [en, ar] # auto-detect picks between these two only
   beam_size: 1 # greedy decoding for latency; raise for offline WER benchmarking
   local_agreement:
     enabled: true

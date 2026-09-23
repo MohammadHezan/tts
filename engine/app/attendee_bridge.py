@@ -112,9 +112,9 @@ async def run_bridge(
     """Serve one Attendee bot connection until it disconnects."""
     logger = get_logger()
     pipeline = pipeline_factory()
+    frames: asyncio.Queue[bytes | None] = asyncio.Queue()
     outgoing: asyncio.Queue[str | None] = asyncio.Queue()
     bot_id = "unknown"
-    buffer = bytearray()
 
     async def send_paced() -> None:
         # Real-time pacing, so Attendee receives the bot's voice the way a live
@@ -130,11 +130,25 @@ async def run_bridge(
         elif event.type in CAPTION_EVENT_TYPES:
             hub.publish(bot_id, event.model_dump_json(exclude={"audio"}))
 
+    async def process() -> None:
+        # Its own task, so the socket keeps being read while a turn is being
+        # transcribed, translated and spoken (seconds, on CPU) - the meeting's
+        # audio queues here in order instead of backing up inside Attendee.
+        while (frame := await frames.get()) is not None:
+            async for event in pipeline.process_frame(frame):
+                handle(event)
+        async for event in pipeline.flush():
+            handle(event)
+
     sender = asyncio.create_task(send_paced())
+    processor = asyncio.create_task(process())
     log_event(logger, logging.INFO, "attendee_bot_connected")
+    buffer = bytearray()
     try:
         while True:
             message = json.loads(await ws.receive_text())
+            if processor.done():
+                break  # processing crashed - the finally below re-raises why
             if message.get("trigger") != "realtime_audio.mixed":
                 continue
             bot_id = message.get("bot_id", bot_id)
@@ -142,18 +156,18 @@ async def run_bridge(
             chunk = base64.b64decode(data["chunk"])
             buffer += resample(chunk, data.get("sample_rate", ATTENDEE_SAMPLE_RATE), pipeline_sample_rate)
             while len(buffer) >= frame_bytes:
-                frame = bytes(buffer[:frame_bytes])
+                frames.put_nowait(bytes(buffer[:frame_bytes]))
                 del buffer[:frame_bytes]
-                async for event in pipeline.process_frame(frame):
-                    handle(event)
     except WebSocketDisconnect:
         pass
     finally:
-        async for event in pipeline.flush():
-            handle(event)
-        outgoing.put_nowait(None)
+        frames.put_nowait(None)
         try:
-            await sender
-        except (RuntimeError, WebSocketDisconnect):
-            pass  # Attendee already closed the socket; nothing left to deliver to
-        log_event(logger, logging.INFO, "attendee_bot_disconnected", bot_id=bot_id)
+            await processor  # finish what was already heard, so its captions still reach the dashboard
+        finally:
+            outgoing.put_nowait(None)
+            try:
+                await sender
+            except (RuntimeError, WebSocketDisconnect):
+                pass  # Attendee already closed the socket; nothing left to deliver to
+            log_event(logger, logging.INFO, "attendee_bot_disconnected", bot_id=bot_id)

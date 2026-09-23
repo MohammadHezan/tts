@@ -45,3 +45,6 @@ jobs:
 
       - name: Meeting bot end-to-end (real Chromium, fake Attendee)
         run: python -m scripts.verify_meeting_bot --chromium-path "$(python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
+
+      - name: Two-device meeting simulation, wiring only (fake models)
+        run: python -m scripts.simulate_meeting --fake-engine --meeting-host 127.0.0.1 --settle-s 3 --idle-s 3 --turn-timeout-s 60 --dashboard --chromium-path "$(python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')" --out /tmp/sim-output

@@ -39,7 +39,8 @@ button.secondary {
 }
 
 .turn .heard-tag,
-.turn .said-tag {
+.turn .said-tag,
+.turn .error-tag {
   display: block;
   font-size: 12px;
   color: var(--muted);
@@ -48,4 +49,9 @@ button.secondary {
 
 .turn .said-tag {
   color: var(--ok);
+}
+
+.turn .error-tag,
+.turn .error-text {
+  color: var(--error);
 }
