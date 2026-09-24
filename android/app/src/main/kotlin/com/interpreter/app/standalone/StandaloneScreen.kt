@@ -53,7 +53,7 @@ fun StandaloneScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Interpreter") },
-                actions = { TextButton(onClick = onSwitchMode) { Text("Caption Bridge") } },
+                actions = { TextButton(onClick = onSwitchMode) { Text("Meeting Bot") } },
             )
         },
     ) { padding ->
