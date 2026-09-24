@@ -22,6 +22,12 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        // Real phones only: the x86/x86_64 copies of the native libraries (ML
+        // Kit's translator) are for emulators and made up ~35MB of a 90MB APK -
+        // too big to download reliably over mobile data.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
