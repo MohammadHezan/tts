@@ -1,33 +1,88 @@
-# Meeting Interpreter - the translator side. Attendee (the meeting bot that
-# actually joins Zoom/Meet) runs from its own official setup, not from here:
-# see README "Meeting Interpreter" for why and for the full walkthrough.
+# Meeting Interpreter - the whole thing in one stack: the translator, the
+# translation model (Ollama) and Attendee, the open-source bot that joins the
+# Zoom / Google Meet / Teams call. Start it with ./start.sh or
+# "Start Interpreter.bat" (or plain `docker compose up -d`), then open
+# http://localhost:8765/bot.html - or the Interpreter app's Meeting Bot screen.
 #
-#   docker compose up -d --build
-#   open http://localhost:8765/bot.html
+# Nothing to configure. The first start:
+#   - setup           generates Attendee's secrets, its API key and a private
+#                     certificate (deploy/setup_secrets.py)
+#   - attendee-setup  creates Attendee's database and registers that key
+#   - ollama-pull     downloads the ~4.9GB translation model
+# Only the translator's port (8765) is published. Attendee, its database and
+# Redis are reachable only inside this stack's Docker network.
 #
-# Needs ./models with the Kokoro + Piper voice files (README "Setup") and a
-# .env with ATTENDEE_BASE_URL / ATTENDEE_API_KEY / ATTENDEE_CALLBACK_WS_URL.
+# Using an Attendee you run elsewhere instead: see
+# docker-compose.external-attendee.yml.
+
+x-attendee: &attendee
+  # Attendee (Elastic License 2.0, github.com/attendee-labs/attendee), built
+  # unmodified from the tagged release: CI publishes the build to this image
+  # (publish-images.yml), and the build section is the fallback if it can't be
+  # pulled. The scripts it runs come from our setup volume, not the image.
+  image: ghcr.io/mohammadhezan/interpreter-attendee:1.79.2
+  build:
+    context: https://github.com/attendee-labs/attendee.git#v1.79.2
+  volumes:
+    - interpreter-setup:/setup:ro
+  restart: unless-stopped
+
+x-attendee-env: &attendee-env
+  DJANGO_SETTINGS_MODULE: attendee.settings.development
+  POSTGRES_HOST: postgres
+  REDIS_URL: redis://redis:6379/5
+  ALLOWED_HOSTS: attendee-app,localhost
 
 services:
   translator:
+    image: ghcr.io/mohammadhezan/interpreter-translator:latest
     build: .
     ports:
-      - "8765:8000" # 8765 on the host, since Attendee's own web app usually wants 8000
+      - "8765:8000" # 8765 on the host; 8443 (TLS, for Attendee's bot) stays internal
     env_file:
       - path: .env
         required: false
+    environment:
+      # Fixed on purpose: an old .env from the manual setup must not point the
+      # bundled stack at some other Attendee.
+      ATTENDEE_BASE_URL: http://attendee-app:8000
+      ATTENDEE_API_KEY: ""
+      ATTENDEE_API_KEY_FILE: /setup/attendee_api_key
+      ATTENDEE_CALLBACK_WS_URL: wss://translator:8443/attendee/ws
+      TLS_CERT_FILE: /setup/translator.pem
+      TLS_KEY_FILE: /setup/translator.key
+      INTERPRETER_PHONE_URL: ${INTERPRETER_PHONE_URL:-} # set by the start scripts
     extra_hosts:
-      - "host.docker.internal:host-gateway" # lets ATTENDEE_BASE_URL point at an Attendee on this host, on Linux too
+      - "host.docker.internal:host-gateway" # for docker-compose.external-attendee.yml on Linux
     volumes:
-      - ./models:/models:ro
-      - whisper-cache:/root/.cache/huggingface
+      - interpreter-setup:/setup:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 3
+      start_period: 60s
     depends_on:
+      setup:
+        condition: service_completed_successfully
       ollama-pull:
         condition: service_completed_successfully # don't come up "working" before the model exists
     restart: unless-stopped
 
+  setup:
+    image: ghcr.io/mohammadhezan/interpreter-translator:latest
+    build: .
+    command: ["python", "/srv/tts/deploy/setup_secrets.py"]
+    volumes:
+      - interpreter-setup:/setup
+    restart: "no"
+
   ollama:
     image: ollama/ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h # otherwise the model unloads after 5 idle minutes and the next sentence waits for it
+      OLLAMA_NUM_PARALLEL: "1" # one conversation at a time; each extra slot costs RAM
+      OLLAMA_MAX_LOADED_MODELS: "1"
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:
@@ -49,6 +104,74 @@ services:
         condition: service_healthy
     restart: "no"
 
+  attendee-setup:
+    <<: *attendee
+    entrypoint: ["/tini", "--"] # no PulseAudio needed for migrations
+    command: ["bash", "/setup/attendee_run.sh", "bash", "/setup/attendee_setup.sh"]
+    environment: *attendee-env
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: "no"
+
+  attendee-app:
+    <<: *attendee
+    entrypoint: ["/tini", "--"]
+    command: ["bash", "/setup/attendee_run.sh", "python", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
+    environment: *attendee-env
+    depends_on:
+      attendee-setup:
+        condition: service_completed_successfully
+
+  # Runs the bots themselves: a Chrome per bot, joined to the call, with
+  # PulseAudio (Attendee's own entrypoint) for its microphone and speaker.
+  attendee-worker:
+    <<: *attendee
+    command: ["bash", "/setup/attendee_run.sh", "celery", "-A", "attendee", "worker", "-l", "INFO", "--concurrency=2"]
+    environment:
+      <<: *attendee-env
+      ENABLE_CHROME_SANDBOX: "false"
+    shm_size: 2gb # Chrome crashes with Docker's default 64MB /dev/shm
+    depends_on:
+      attendee-setup:
+        condition: service_completed_successfully
+
+  attendee-scheduler:
+    <<: *attendee
+    entrypoint: ["/tini", "--"]
+    command: ["bash", "/setup/attendee_run.sh", "python", "manage.py", "run_scheduler"]
+    environment: *attendee-env
+    depends_on:
+      attendee-setup:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:15.3-alpine
+    environment:
+      # Attendee's development settings expect exactly these; the database is
+      # only reachable inside this stack.
+      POSTGRES_DB: attendee_development
+      POSTGRES_USER: attendee_development_user
+      POSTGRES_PASSWORD: attendee_development_user
+      PGDATA: /data/postgres
+    volumes:
+      - attendee-db:/data/postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "attendee_development_user", "-d", "attendee_development"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
 volumes:
   ollama-models:
-  whisper-cache:
+  interpreter-setup:
+  attendee-db:

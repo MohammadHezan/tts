@@ -53,15 +53,21 @@ capturing another app's call audio or acting as its microphone
 (`AudioPlaybackCaptureConfiguration` excludes the `USAGE_VOICE_COMMUNICATION`
 streams Zoom/Meet use), but a separate participant needs neither.
 
-**Use it:** Standalone → "Meeting Bot" in the top bar. Enter your
-computer's address on the same Wi-Fi (e.g. `http://192.168.1.50:8765`), paste
-the meeting link, tap *Send interpreter into meeting*, admit the bot from the
-meeting's waiting room. The screen shows each sentence it heard and what it
-said, live. Leaving the screen doesn't pull the bot out - *Remove bot* does.
+**Use it:** start the interpreter on the computer (`Start Interpreter` /
+`./start.sh`, root README "Meeting Interpreter"). On the phone: Standalone →
+"Meeting Bot" in the top bar. The screen finds the computer on the Wi-Fi by
+itself (`ServerFinder.kt` asks every address on the phone's subnet for
+`/healthz` on port 8765 and remembers the one that answers as the
+interpreter); if it can't, it offers a box to type the address. Paste the
+meeting link (*Paste* button), tap *Send interpreter into meeting*, admit
+"AI Interpreter" in the meeting. The screen shows the bot's status in plain
+words, why it couldn't join if it can't, and each sentence it heard and said,
+live. Leaving the screen doesn't pull the bot out - *Remove interpreter* does.
 
 Source: `app/src/main/kotlin/com/interpreter/app/meetingbot/` -
 `MeetingBotApi.kt` (the server's `/api/bots` REST + caption websocket),
-`MeetingBotViewModel.kt`, `MeetingBotScreen.kt`. Captions go through core's
+`ServerFinder.kt`, `MeetingBotViewModel.kt`, `MeetingBotScreen.kt`; the subnet
+math is `core`'s `SubnetScan.kt` (unit-tested). Captions go through core's
 existing `ConversationState` reducer unchanged - the server sends the same
 `PipelineEvent` JSON Engine mode already parses.
 

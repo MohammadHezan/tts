@@ -1,0 +1,15 @@
+# Optional: use an Attendee you run somewhere else (another machine, or
+# Attendee's hosted service) instead of the one bundled in docker-compose.yml.
+# Put the three values in .env, then start only the translator side:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.external-attendee.yml up -d translator
+#
+# ATTENDEE_CALLBACK_WS_URL must be a wss:// address that Attendee can reach -
+# Attendee refuses any other scheme when the bot is created.
+services:
+  translator:
+    environment:
+      ATTENDEE_BASE_URL: ${ATTENDEE_BASE_URL:?set ATTENDEE_BASE_URL in .env}
+      ATTENDEE_API_KEY: ${ATTENDEE_API_KEY:?set ATTENDEE_API_KEY in .env}
+      ATTENDEE_API_KEY_FILE: ""
+      ATTENDEE_CALLBACK_WS_URL: ${ATTENDEE_CALLBACK_WS_URL:?set ATTENDEE_CALLBACK_WS_URL in .env}

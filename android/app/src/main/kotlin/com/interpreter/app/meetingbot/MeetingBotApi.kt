@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -17,7 +18,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
-data class BotInfo(val id: String, val state: String)
+data class BotInfo(val id: String, val state: String, val problem: String? = null)
 
 class MeetingBotException(message: String) : Exception(message)
 
@@ -79,6 +80,8 @@ class MeetingBotApi(private val client: OkHttpClient, serverUrl: String) {
     private fun JsonObject.toBotInfo(): BotInfo = BotInfo(
         id = this["id"]?.jsonPrimitive?.content ?: throw MeetingBotException("Server response had no bot id"),
         state = this["state"]?.jsonPrimitive?.content ?: "unknown",
+        // Why it couldn't join or had to leave, already phrased for people (server.py _bot_problem).
+        problem = (this["problem"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
     )
 
     private companion object {

@@ -14,6 +14,16 @@ Android app (see [Meeting Interpreter](#meeting-interpreter-a-bot-that-joins-zoo
 Native iOS and foldable UX are **not** in this delivery - see
 [Status](#status) and [Native apps](#native-apps).
 
+## Quick start: the Meeting Interpreter
+
+1. **Computer** (Windows/Linux/Mac, 16 GB memory, Docker installed): download
+   [Interpreter-PC.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-PC.zip),
+   unzip, double-click `Start Interpreter` (Windows) or run `./start.sh`.
+2. **Phone**: install [Interpreter-debug.apk](https://github.com/MohammadHezan/tts/releases/download/android-latest/Interpreter-debug.apk),
+   open *Meeting Bot*, paste a Google Meet link, send.
+
+Details: [Meeting Interpreter](#meeting-interpreter-a-bot-that-joins-zoommeet-and-interprets).
+
 ## Download prebuilt (Windows + Linux + Android)
 
 Built by CI on real Windows/Linux/Android runners (this repo's own dev
@@ -42,8 +52,8 @@ Windows and Linux both build from the exact same `engine/desktop_launcher.spec`
      open that page on the phone and tap `Interpreter-debug.apk`, no login or
      unzipping.
 
-Requires being signed into GitHub with access to this (private) repo to
-download any artifact.
+Downloading Actions artifacts requires being signed in to GitHub (the
+release links above don't).
 
 **Live two-way translation inside an actual Zoom/Google Meet call**: see
 [Call mode (Windows/Linux + Zoom/Meet)](#call-mode-windowslinux--zoommeet)
@@ -57,9 +67,17 @@ tts/
 ├── config.yaml              # single source of truth for provider selection + params
 ├── glossary.yaml            # EN<->AR term glossary, injected into the translator prompt
 ├── .env.example              # copy to .env - API keys only, never committed
-├── Dockerfile                # translator image (Meeting Interpreter)
-├── docker-compose.yml        # translator + Ollama; Attendee runs from its own setup
-├── deploy/config.docker.yaml # CPU config used inside the container
+├── Dockerfile                # translator image (Meeting Interpreter), voices + Whisper built in
+├── docker-compose.yml        # the whole Meeting Interpreter: translator + Ollama + Attendee
+├── start.sh / stop.sh        # one-click start/stop (Linux/Mac)
+├── Start Interpreter.bat     # one-click start (Windows) -> deploy/start.ps1
+├── Stop Interpreter.bat
+├── deploy/
+│   ├── config.docker.yaml     # CPU config used inside the container
+│   ├── setup_secrets.py       # first start: Attendee secrets + API key, translator certificate
+│   ├── attendee/              # scripts the bundled Attendee containers run
+│   ├── download_models.py     # voices + Whisper into the image
+│   └── verify_stack.py        # CI check of the running stack with the real Attendee
 ├── engine/                   # Python 3.11, FastAPI + WebSocket
 │   ├── requirements.txt
 │   ├── pyproject.toml         # pytest config
@@ -74,6 +92,7 @@ tts/
 │   │   ├── prompts.py          # shared translator domain system-prompt + glossary + context
 │   │   ├── pipeline.py         # VAD -> ASR -> segmenter -> translator -> TTS, bidirectional
 │   │   ├── server.py           # FastAPI app: ws://.../ws, /api/bots, /attendee/ws, static files
+│   │   ├── serve.py            # runs server.py on HTTP :8000 + TLS :8443 (for Attendee's wss:// bot)
 │   │   ├── attendee_bridge.py  # Attendee meeting-bot audio <-> Pipeline (Meeting Interpreter)
 │   │   ├── attendee_client.py  # Attendee REST: create / get / remove bots
 │   │   └── providers/
@@ -423,73 +442,87 @@ the translator it streams audio to: `engine/app/attendee_bridge.py`
 `engine/app/attendee_client.py` (creating/removing bots - the Attendee API key
 never leaves the server), and the dashboard at `/bot.html`.
 
-### Test it now - on one machine (the i7 + RTX 3060 PC is ideal)
+### Test it now - one download, one start
 
-1. **Run Attendee** using [its own self-hosting instructions](https://github.com/attendee-labs/attendee)
-   (Docker; it brings its own Postgres + Redis). Follow theirs exactly - its
-   service layout and settings are theirs to maintain, which is why they aren't
-   copied into this repo's compose file. Then, in Attendee's web UI:
-   - create an **API key**;
-   - for **Zoom**: create a *General App* in the [Zoom Marketplace](https://marketplace.zoom.us/)
-     and paste its Client ID/Secret into Attendee's settings. An unpublished app
-     is enough for meetings on **your own** Zoom account; joining meetings hosted
-     by *other* accounts needs Zoom's app review;
-   - **Google Meet** needs no credentials - start there for your first test.
-2. **Voice files**: put `kokoro-v1.0.onnx`, `voices-v1.0.bin`,
-   `ar_JO-kareem-medium.onnx` and `ar_JO-kareem-medium.onnx.json` in `./models/`
-   (download links in [Setup](#setup)).
-3. **`.env`** (copy `.env.example`), with this machine's LAN IP:
-   ```
-   ATTENDEE_BASE_URL=http://host.docker.internal:8000   # where Attendee's API is
-   ATTENDEE_API_KEY=<the key from step 1>
-   ATTENDEE_CALLBACK_WS_URL=ws://192.168.1.50:8765/attendee/ws
-   ```
-4. **Start the translator**: `docker compose up -d --build`. The first run
-   downloads the translation model (~4.9GB) before the translator comes up,
-   and Whisper's `small` model on first use; follow along with
-   `docker compose logs -f`.
-5. Open **`http://192.168.1.50:8765/bot.html`**, paste a Meet/Zoom link, press
-   *Send interpreter into meeting*, **admit the bot** from the meeting's waiting
-   room, and talk. The dashboard shows each sentence it heard and what it said.
-   The dashboard warns you on load if Attendee isn't configured, speech is off,
-   or the callback address was left to default to localhost (which Attendee in
-   Docker can't reach). It can't detect a wrong address you set explicitly.
-6. **From the phone**: Android app → *Meeting Bot* screen → translator server
-   `http://192.168.1.50:8765` → paste the link → send. Same bot, same captions.
+Everything runs on one computer (Windows, Linux or Mac with 16 GB of memory):
+the translator, the translation model, **and Attendee itself**, bundled in
+`docker-compose.yml` and set up automatically - no Attendee install, no API key,
+no `.env`, no IP address, no model downloads by hand.
 
-The Docker translator is CPU-only (`deploy/config.docker.yaml`: Whisper
-`small`, int8). With an NVIDIA GPU, the quickest win is putting the translation
-model (the slowest step on CPU) on it:
-`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build`
+1. Install **Docker Desktop** (Windows/Mac) or Docker (Linux:
+   `curl -fsSL https://get.docker.com | sh`).
+2. Download **[Interpreter-PC.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-PC.zip)**
+   and unzip it (or use this repo - it's the same files).
+3. **Windows:** double-click `Start Interpreter`. **Linux/Mac:** `./start.sh`.
+   The first start downloads about 15 GB (20-40 minutes); after that it starts
+   in about a minute. It opens `http://localhost:8765/bot.html` when ready.
+4. Start a **Google Meet** and copy its link. On the phone: Interpreter app →
+   *Meeting Bot* (it finds the computer on the Wi-Fi by itself) → paste → *Send
+   interpreter into meeting*. Or paste it on the computer's page.
+5. In Meet, **let "AI Interpreter" in**, and talk.
+
+Google Meet and Microsoft Teams work as they are. Zoom bots need a Zoom
+developer app's credentials in Attendee (see [Attendee's docs](https://github.com/attendee-labs/attendee#obtaining-zoom-oauth-credentials)) -
+use Meet for testing. Two phones in one room: use earbuds or separate rooms, or
+each phone's microphone hears the other.
+
+**What the start scripts and the first start do for you:**
+- `start.sh` / `deploy/start.ps1` (behind `Start Interpreter.bat`): start Docker
+  Desktop if needed; on Windows, offer to raise Docker's memory cap (WSL gives
+  it half the PC's memory by default - too little for a 16 GB PC) and to let
+  phones on the Wi-Fi reach port 8765; pass this computer's Wi-Fi address to
+  the dashboard; wait until everything is ready.
+- `setup` (deploy/setup_secrets.py): generates Attendee's secrets, its API key,
+  and a private certificate authority + certificate for the translator.
+  Attendee refuses to stream audio to anything but a `wss://` address, so the
+  bot connects to `wss://translator:8443`, trusting only that private CA
+  (deploy/attendee/attendee_run.sh). The dashboard and phones use plain HTTP
+  on 8765 (engine/app/serve.py runs the same app on both ports).
+- `attendee-setup`: creates Attendee's database and registers the API key
+  (deploy/attendee/attendee_provision.py - no Attendee account needed).
+- `ollama-pull`: downloads the translation model. The voices and Whisper are
+  built into the translator image (deploy/download_models.py).
+Only port 8765 is published. Attendee, its database and Redis are reachable
+only inside the stack. Bots are created with recording off - the interpreter
+only needs the live audio, and encoding video would compete with Whisper and
+the translation model for the CPU.
+
+The Attendee image is Attendee's tagged release built unmodified (Elastic
+License 2.0) and published by `.github/workflows/one-click-stack.yml`, so a
+first start downloads it instead of building it. Using an Attendee you run
+elsewhere instead: `docker-compose.external-attendee.yml`.
+
+The translator is CPU-only (`deploy/config.docker.yaml`: Whisper `small`,
+int8). With an NVIDIA GPU, the quickest win is putting the translation model
+(the slowest step on CPU) on it:
+`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`
 (needs Docker GPU support - see the comments in `docker-compose.gpu.yml`; the
 file is validated with `docker compose config` but has not been run on a GPU).
-For Whisper on the GPU as well, run the translator natively instead (`uvicorn
-app.server:app --host 0.0.0.0 --port 8765` from `engine/`, repo-root
-`config.yaml` with `large-v3-turbo`) and point `ATTENDEE_CALLBACK_WS_URL` at
-it - the dashboard and bridge are part of the same server, so the Windows/Linux
-desktop app serves `/bot.html` too.
 
 **How it behaves in a call**: everyone hears the bot's translation after each
 sentence (consecutive interpretation, not simultaneous) - speaker finishes, a
 few seconds later the bot says it in the other language. The bot never hears
 itself (Zoom/Meet don't send you your own audio), so it can't loop. Each bot
 loads its own Whisper model, so two bots at once means two models in memory.
+Attendee's defaults decide when it leaves on its own: 60s after everyone else
+has left, or after 10 minutes of silence once it has been in for 20 minutes.
 
-**What's verified vs. not**: `engine/scripts/verify_meeting_bot.py` runs our
-whole side for real - the dashboard in a real Chromium, our API, the create-bot
-request, a stand-in Attendee connecting back to `/attendee/ws` and streaming
-real synthesized speech through the real VAD, 2s of translated speech coming
-back as `bot_output` chunks, and a wrong-token connection being refused. It's
-also run on every push by `.github/workflows/test-engine.yml`, and the image is
-built and smoke-tested by `build-docker.yml`. **Not verified: real Attendee
-itself.** Its websites were blocked from the environment this was built in, so
-the message formats come from its documentation as quoted in search results,
-not from running it: `realtime_audio.mixed` / `realtime_audio.bot_output`, base64
-16-bit mono PCM, `websocket_settings.audio` with a `sample_rate` of
-8000/16000/24000. The field name `url` inside `websocket_settings.audio`, and
-the `POST /api/v1/bots/{id}/leave` endpoint, are inferred rather than seen
-verbatim. If Attendee rejects a request, the dashboard shows its exact error
-message - that pinpoints what to change in `attendee_client.py`.
+**What's verified vs. not**: the Attendee side was checked against Attendee's
+source (v1.79.2): the `realtime_audio.mixed` / `realtime_audio.bot_output`
+messages, `websocket_settings.audio` (`url`, `sample_rate`), the leave endpoint,
+API-key authentication, and the `wss://`-only rule - which the earlier manual
+setup (a `ws://` callback) would have failed on. `.github/workflows/one-click-stack.yml`
+runs the whole stack with `./start.sh` on every change, with the real bundled
+Attendee: `deploy/verify_stack.py` sends a bot to a Meet link through the
+dashboard's API, and checks Attendee accepts the request, its worker launches
+the bot's browser, and the failure reason (there's no real meeting behind the
+link) comes back as a sentence; a check from inside Attendee's worker container
+confirms the bot trusts the translator's certificate. `engine/scripts/verify_meeting_bot.py`
+runs our side with a stand-in Attendee over `wss://` - dashboard in a real
+Chromium, speech in, translated speech back as `bot_output`. **Not verified:
+joining a real call**, which needs a real meeting - the first real test is yours.
+If Attendee rejects a request or a bot can't join, the dashboard and the phone
+show the reason.
 
 ### Tested: a two-device meeting with the real models
 
@@ -785,10 +818,11 @@ sends the bot and shows its captions. Our whole side verified for real by
 `scripts/verify_meeting_bot.py` (real Chromium, real VAD, stand-in Attendee),
 which caught two real bugs while being written: captions lost when the
 dashboard connected after the bot's first sentence (the event feed now
-replays history), and the caption socket blocking server shutdown. Real
-Attendee itself unverified - see the section's "What's verified vs. not".
-CI now also runs the Python suite and both browser checks on every push
-(`test-engine.yml`) and builds + smoke-tests the image (`build-docker.yml`).
+replays history), and the caption socket blocking server shutdown. Since
+then bundled into a one-click stack with Attendee itself, checked against
+Attendee's source and run with the real Attendee in CI - see the section's
+"What's verified vs. not". CI also runs the Python suite and both browser
+checks on every push (`test-engine.yml`).
 
 **Not yet built**: iOS app, foldable UX (split view / Flex mode / cover
 screen), a GUI for call mode (device dropdowns instead of `--list-devices` +

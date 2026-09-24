@@ -221,6 +221,13 @@ class Meeting:
             self._tasks.append(asyncio.create_task(self._join(self.create_body["websocket_settings"]["audio"]["url"])))
             return {"id": BOT_ID, "state": self.state, "meeting_url": self.create_body["meeting_url"]}
 
+        # The dashboard's readiness check (engine app/server.py _attendee_status).
+        @app.get("/api/v1/bots")
+        async def list_bots(request: Request) -> dict[str, Any]:
+            if request.headers.get("Authorization") != f"Token {self.api_key}":
+                raise HTTPException(401, "bad token")
+            return {"results": []}
+
         @app.get("/api/v1/bots/{bot_id}")
         async def get_bot(bot_id: str) -> dict[str, Any]:
             return {"id": bot_id, "state": self.state}

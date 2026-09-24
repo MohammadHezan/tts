@@ -2,3 +2,5 @@
 # end-to-end check of the web client). Not required to run the engine.
 -r requirements.txt
 playwright>=1.47,<2.0
+# deploy/setup_secrets.py (the bundled Attendee's certificate) and its tests
+cryptography>=42

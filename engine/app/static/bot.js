@@ -12,6 +12,8 @@ const statusEl = document.getElementById('status');
 const hintEl = document.getElementById('bot-hint');
 const warningsEl = document.getElementById('warnings');
 const turnsEl = document.getElementById('turns');
+const readinessEl = document.getElementById('readiness');
+const phoneHintEl = document.getElementById('phone-hint');
 
 const LAST_BOT_KEY = 'interpreter.lastBotId';
 const FINISHED_STATES = new Set(['ended', 'fatal_error']);
@@ -22,7 +24,7 @@ const STATE_HINTS = {
   joined_recording: 'Bot is in the meeting. Everyone in the call will hear its translations.',
   leaving: 'Bot is leaving the meeting.',
   ended: 'Bot has left the meeting.',
-  fatal_error: 'Bot could not stay in the meeting - Attendee\'s own dashboard has the reason.',
+  fatal_error: 'Bot could not stay in the meeting.',
 };
 
 let botId = null;
@@ -81,37 +83,54 @@ async function api(method, path, body) {
   return data;
 }
 
+let meetingServiceReady = false;
+
 async function loadConfig() {
   let config;
   try {
     config = await api('GET', '/api/bots/config');
   } catch (err) {
-    addWarning([`Could not reach the translator server: ${err.message}`]);
+    readinessEl.textContent = `Could not reach the translator server: ${err.message}`;
+    setTimeout(loadConfig, 5000);
     return;
   }
-  if (!config.attendee_configured) {
-    addWarning([
-      'Attendee is not configured. Set ',
-      { code: 'ATTENDEE_BASE_URL' },
-      ' and ',
-      { code: 'ATTENDEE_API_KEY' },
-      ' in .env and restart - see README "Meeting Interpreter".',
-    ]);
-    sendBtn.disabled = true;
+  warningsEl.replaceChildren();
+  warningsEl.hidden = true;
+  meetingServiceReady = config.attendee_ready;
+  readinessEl.classList.toggle('ready', config.attendee_ready);
+  if (config.attendee_ready) {
+    readinessEl.textContent = 'Ready. Paste a meeting link and send the interpreter in.';
+  } else {
+    // Usually the bundled meeting service still starting - check again shortly.
+    readinessEl.textContent = config.attendee_problem || 'The meeting service is not ready yet.';
+    setTimeout(loadConfig, 5000);
   }
+  if (!botId) sendBtn.disabled = !config.attendee_ready;
   if (!config.tts_enabled) {
     addWarning([
       'Speech output is off (tts.provider: none in config.yaml) - the bot will listen and caption here, but stay silent in the meeting.',
     ]);
   }
-  if (config.callback_is_localhost) {
+  if (!config.callback_is_secure) {
+    addWarning([
+      'Attendee only streams audio to wss:// addresses, but this server would give it ',
+      { code: config.callback_ws_url },
+      ' - set ',
+      { code: 'ATTENDEE_CALLBACK_WS_URL' },
+      ' to a wss:// address it can reach. The bundled docker-compose.yml does this for you.',
+    ]);
+  } else if (config.callback_is_localhost) {
     addWarning([
       'Attendee will be told to connect back to ',
       { code: config.callback_ws_url },
       '. If Attendee runs in Docker or on another machine, that address points at itself, not at this server - set ',
       { code: 'ATTENDEE_CALLBACK_WS_URL' },
-      ' to this machine\'s LAN address, or open this page via that address instead of localhost.',
+      ' to an address Attendee can reach.',
     ]);
+  }
+  if (config.phone_url) {
+    phoneHintEl.textContent = `On your phone: the Interpreter app's Meeting Bot screen finds this computer by itself, or open ${config.phone_url}/bot.html (same Wi-Fi).`;
+    phoneHintEl.hidden = false;
   }
 }
 
@@ -163,7 +182,7 @@ async function pollState() {
     const state = bot.state || 'unknown';
     setStatus(`Bot: ${state}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
     if (state !== hintedState && STATE_HINTS[state]) {
-      hintEl.textContent = STATE_HINTS[state];
+      hintEl.textContent = [STATE_HINTS[state], bot.problem].filter(Boolean).join(' ');
       hintedState = state;
     }
     if (FINISHED_STATES.has(state)) stopTracking();
@@ -191,13 +210,13 @@ function stopTracking() {
   botId = null;
   remember(null);
   removeBtn.hidden = true;
-  sendBtn.disabled = false;
+  sendBtn.disabled = !meetingServiceReady;
 }
 
 sendBtn.addEventListener('click', async () => {
   const meetingUrl = meetingUrlInput.value.trim();
   if (!meetingUrl) {
-    hintEl.textContent = 'Paste a Zoom or Google Meet link first.';
+    hintEl.textContent = 'Paste a meeting link first.';
     return;
   }
   hintEl.textContent = '';

@@ -31,6 +31,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -46,7 +47,8 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 _cfg = load_config()
 _logger = configure_logging(_cfg.logging)
-_asr = build_asr_provider(_cfg.asr)
+_asr = None  # for /ws only - built on first use, so a meeting-bot-only server never loads a model it doesn't need
+_asr_lock = asyncio.Lock()
 _translator = build_translator_provider(_cfg.translator)
 _tts = build_tts_provider(_cfg.tts)  # None when tts.provider: none - captions only
 
@@ -70,6 +72,12 @@ def _attendee_client() -> AttendeeClient:
     return AttendeeClient(settings)
 
 
+# Shown when Attendee can't be reached at all. With docker-compose.yml's bundled
+# Attendee that almost always means it is still starting (first start runs its
+# database migrations), so say that rather than a raw connection error.
+_ATTENDEE_UNREACHABLE = "The meeting service is still starting. Wait a minute and try again."
+
+
 def _bridge_ws_url(request: Request) -> str:
     """Where Attendee should connect back to. ATTENDEE_CALLBACK_WS_URL wins; otherwise
     derived from however this server was reached, which only works for Attendee if
@@ -87,28 +95,57 @@ async def _call_attendee(call: Any) -> dict[str, Any]:
         return await call(client)
     except AttendeeError as error:
         raise HTTPException(502, f"Attendee rejected the request ({error.status_code}): {error.detail}") from error
-    except OSError as error:
-        raise HTTPException(502, f"Could not reach Attendee at {os.environ.get('ATTENDEE_BASE_URL')}: {error}") from error
+    except (OSError, httpx.TransportError) as error:
+        log_event(_logger, logging.WARNING, "attendee_unreachable", base_url=os.environ.get("ATTENDEE_BASE_URL"), error=repr(error))
+        raise HTTPException(503, _ATTENDEE_UNREACHABLE) from error
     finally:
         await client.aclose()
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+    # "service" lets the Android app tell this server apart from anything else
+    # answering on port 8765 while it scans the Wi-Fi for it.
+    return {"status": "ok", "service": "interpreter"}
+
+
+async def _attendee_status() -> tuple[bool, str | None]:
+    """(ready, problem) - problem is a plain sentence for the dashboard/app, or None."""
+    settings = AttendeeSettings.from_env()
+    if settings is None:
+        return False, "Attendee is not configured: set ATTENDEE_BASE_URL and ATTENDEE_API_KEY."
+    client = AttendeeClient(settings, timeout=5.0)
+    try:
+        await client.check()
+        return True, None
+    except AttendeeError as error:
+        if error.status_code in (401, 403):
+            return False, "Attendee refused this server's API key."
+        return False, f"Attendee answered with an error ({error.status_code})."
+    except (OSError, httpx.TransportError):
+        return False, _ATTENDEE_UNREACHABLE
+    finally:
+        await client.aclose()
 
 
 @app.get("/api/bots/config")
 async def bots_config(request: Request) -> dict[str, Any]:
     callback = _bridge_ws_url(request).split("?", 1)[0]
     auto_derived = not os.environ.get("ATTENDEE_CALLBACK_WS_URL")
+    ready, problem = await _attendee_status()
     return {
         "attendee_configured": AttendeeSettings.from_env() is not None,
+        "attendee_ready": ready,
+        "attendee_problem": problem,
         "tts_enabled": _tts is not None,
         "callback_ws_url": callback,
         # Only worth warning about when guessed from how this page was opened -
         # an explicit localhost setting is a deliberate same-machine setup.
         "callback_is_localhost": auto_derived and any(host in callback for host in ("localhost", "127.0.0.1")),
+        # Attendee rejects any other scheme when the bot is created.
+        "callback_is_secure": callback.startswith("wss://"),
+        # Set by start.sh / "Start Interpreter.bat" to this computer's Wi-Fi address.
+        "phone_url": os.environ.get("INTERPRETER_PHONE_URL") or None,
     }
 
 
@@ -120,9 +157,42 @@ async def create_bot(body: CreateBotRequest, request: Request) -> dict[str, Any]
     )
 
 
+# Attendee's reason codes (bots/models.py BotEventSubTypes upstream) for why a
+# bot couldn't join or had to leave, as something to tell the person in front
+# of the dashboard or the phone. Codes not listed fall back to the code itself.
+_BOT_PROBLEMS = {
+    "meeting_not_found": "That meeting link doesn't work. Check the link and try again.",
+    "meeting_not_started_waiting_for_host": "The meeting hasn't started yet. Start it, then send the bot again.",
+    "request_to_join_denied": "Someone in the meeting declined the bot's request to join.",
+    "waiting_room_timeout_exceeded": "Nobody let the bot in from the waiting room in time.",
+    "login_required": "This meeting only lets signed-in users join. Allow guests in the meeting's settings.",
+    "blocked_by_captcha": "The meeting service asked the bot to solve a captcha. Try again in a few minutes.",
+    "unable_to_connect_to_meeting": "The bot couldn't connect to the meeting. Check this computer's internet connection.",
+    "zoom_authorization_failed": "Zoom bots need Zoom developer credentials. Use Google Meet or Teams instead.",
+    "unpublished_zoom_app": "Zoom bots need Zoom developer credentials. Use Google Meet or Teams instead.",
+    "zoom_app_cannot_join_anonymously": "This Zoom meeting doesn't allow bots to join. Use Google Meet or Teams instead.",
+    "meeting_ended_before_bot_joined": "The meeting ended before the bot got in.",
+    "auto_leave_only_participant_in_meeting": "The bot left because everyone else had left.",
+    "auto_leave_silence": "The bot left after a long silence.",
+    "process_terminated": "The bot stopped unexpectedly. This computer may be out of memory.",
+    "heartbeat_timeout": "The bot stopped responding. This computer may be out of memory.",
+    "bot_not_launched": "The bot didn't start. Restart the interpreter and try again.",
+}
+
+
+def _bot_problem(bot: dict[str, Any]) -> str | None:
+    for event in reversed(bot.get("events") or []):
+        code = event.get("sub_type")
+        if code and code not in ("user_requested", "leave_requested_before_bot_joined"):
+            return _BOT_PROBLEMS.get(code, code.replace("_", " ").capitalize() + ".")
+    return None
+
+
 @app.get("/api/bots/{bot_id}")
 async def get_bot(bot_id: str) -> dict[str, Any]:
-    return await _call_attendee(lambda client: client.get_bot(bot_id))
+    bot = await _call_attendee(lambda client: client.get_bot(bot_id))
+    bot["problem"] = _bot_problem(bot)
+    return bot
 
 
 @app.post("/api/bots/{bot_id}/leave")
@@ -185,7 +255,11 @@ async def _warm_up_translator() -> None:
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
+    global _asr
     await ws.accept()
+    async with _asr_lock:
+        if _asr is None:
+            _asr = await asyncio.to_thread(build_asr_provider, _cfg.asr)
     pipeline = Pipeline(_cfg, _asr, _translator, _tts)
     log_event(_logger, logging.INFO, "ws_connected")
     try:

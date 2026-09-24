@@ -84,9 +84,9 @@ class MainActivity : ComponentActivity() {
                         // it keeps interpreting on the server until removed.
                         MeetingBotScreen(
                             uiState = uiState,
+                            onFindServer = meetingBotViewModel::findServer,
                             onServerUrlChange = meetingBotViewModel::setServerUrl,
                             onMeetingUrlChange = meetingBotViewModel::setMeetingUrl,
-                            onBotNameChange = meetingBotViewModel::setBotName,
                             onSendBot = meetingBotViewModel::sendBot,
                             onRemoveBot = meetingBotViewModel::removeBot,
                             onSwitchMode = { mode = AppMode.ENGINE },

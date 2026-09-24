@@ -168,6 +168,7 @@ async def test_attendee_client_sends_realtime_audio_settings() -> None:
         "meeting_url": "https://meet.google.com/abc-defg-hij",
         "bot_name": "AI Interpreter",
         "websocket_settings": {"audio": {"url": "ws://x/attendee/ws?token=t", "sample_rate": 16000}},
+        "recording_settings": {"format": "none"},
     }
 
 

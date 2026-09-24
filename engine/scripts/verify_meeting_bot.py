@@ -4,8 +4,10 @@ a real Chromium, the /attendee/ws bridge, VAD, the Pipeline), only Attendee
 and the Zoom/Meet call behind it are simulated.
 
     Chromium -> bot.html -> POST /api/bots -> engine -> fake Attendee REST API
-    fake Attendee -> connects back to the engine's /attendee/ws (the URL the
-    engine handed it) -> streams espeak-ng speech as realtime_audio.mixed
+    fake Attendee -> connects back to the engine's /attendee/ws over wss://, as
+    real Attendee insists (the URL the engine handed it, trusting only the CA
+    deploy/setup_secrets.py generates, like the bundled Attendee) -> streams
+    espeak-ng speech as realtime_audio.mixed
     engine -> Pipeline -> realtime_audio.bot_output back to fake Attendee,
     plus FINAL/TRANSLATION captions to the dashboard's events socket.
 
@@ -26,6 +28,7 @@ import asyncio
 import base64
 import json
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -44,7 +47,9 @@ from scripts.verify_web_client import build_fake_config, find_chromium
 
 ENGINE_DIR = Path(__file__).resolve().parents[1]
 ENGINE_PORT = 8797
+ENGINE_TLS_PORT = 8798
 FAKE_ATTENDEE_PORT = 8796
+REPO_ROOT = ENGINE_DIR.parent
 API_KEY = "e2e-test-key"
 BOT_ID = "bot_e2e"
 SPEECH = "Good afternoon, I would like to order the walnut dining table."
@@ -54,8 +59,9 @@ FAKE_TRANSCRIPT = "This is a fake transcript."  # what FakeAsr always "hears"
 class FakeAttendee:
     """Attendee's REST API, plus Attendee's websocket behaviour once a bot 'joins'."""
 
-    def __init__(self, meeting_audio: np.ndarray) -> None:
+    def __init__(self, meeting_audio: np.ndarray, ca_file: Path) -> None:
         self.meeting_audio = meeting_audio
+        self.ca_file = ca_file
         self.create_body: dict[str, Any] | None = None
         self.state = "none"
         self.bot_output_chunks = 0
@@ -75,6 +81,13 @@ class FakeAttendee:
             asyncio.create_task(self._join_and_stream(self.create_body["websocket_settings"]["audio"]["url"]))
             return {"id": BOT_ID, "state": self.state, "meeting_url": self.create_body["meeting_url"]}
 
+        # The dashboard's readiness check (engine app/server.py _attendee_status).
+        @app.get("/api/v1/bots")
+        async def list_bots(request: Request) -> dict[str, Any]:
+            if request.headers.get("Authorization") != f"Token {API_KEY}":
+                raise HTTPException(401, "bad token")
+            return {"results": []}
+
         @app.get("/api/v1/bots/{bot_id}")
         async def get_bot(bot_id: str) -> dict[str, Any]:
             return {"id": bot_id, "state": self.state}
@@ -90,7 +103,8 @@ class FakeAttendee:
         from websockets.asyncio.client import connect
 
         try:
-            async with connect(ws_url) as ws:
+            trusted = ssl.create_default_context(cafile=str(self.ca_file))
+            async with connect(ws_url, ssl=trusted) as ws:
                 self.state = "joined_recording"
                 receiver = asyncio.create_task(self._collect_bot_output(ws))
                 samples_per_chunk = 320  # 20ms @ 16kHz, a live meeting's cadence
@@ -210,7 +224,8 @@ def run_dashboard_check(chromium_path: str, fake: FakeAttendee) -> None:
     assert fake.create_body["bot_name"] == "E2E Interpreter"
     audio_settings = fake.create_body["websocket_settings"]["audio"]
     assert audio_settings["sample_rate"] == 16000
-    assert audio_settings["url"].startswith(f"ws://127.0.0.1:{ENGINE_PORT}/attendee/ws?token=")
+    assert audio_settings["url"].startswith(f"wss://localhost:{ENGINE_TLS_PORT}/attendee/ws?token=")
+    assert fake.create_body["recording_settings"] == {"format": "none"}
 
 
 def main() -> int:
@@ -221,7 +236,14 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        fake = FakeAttendee(build_meeting_audio(tmp_dir))
+        setup_dir = tmp_dir / "setup"
+        # The same certificate the bundled docker-compose.yml setup generates.
+        subprocess.run(
+            [sys.executable, str(REPO_ROOT / "deploy" / "setup_secrets.py")],
+            env={**os.environ, "SETUP_DIR": str(setup_dir)},
+            check=True,
+        )
+        fake = FakeAttendee(build_meeting_audio(tmp_dir), setup_dir / "ca.pem")
         fake_server = start_fake_attendee(fake)
 
         env = {
@@ -229,13 +251,15 @@ def main() -> int:
             "ENGINE_CONFIG_PATH": str(build_fake_config(tmp_dir)),
             "ATTENDEE_BASE_URL": f"http://127.0.0.1:{FAKE_ATTENDEE_PORT}",
             "ATTENDEE_API_KEY": API_KEY,
-            "ATTENDEE_CALLBACK_WS_URL": f"ws://127.0.0.1:{ENGINE_PORT}/attendee/ws",
+            "ATTENDEE_CALLBACK_WS_URL": f"wss://localhost:{ENGINE_TLS_PORT}/attendee/ws",
+            "HOST": "127.0.0.1",
+            "PORT": str(ENGINE_PORT),
+            "TLS_PORT": str(ENGINE_TLS_PORT),
+            "TLS_CERT_FILE": str(setup_dir / "translator.pem"),
+            "TLS_KEY_FILE": str(setup_dir / "translator.key"),
         }
-        engine = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "app.server:app", "--host", "127.0.0.1", "--port", str(ENGINE_PORT)],
-            cwd=ENGINE_DIR,
-            env=env,
-        )
+        # How docker-compose.yml runs it: HTTP for the dashboard, TLS for the bot.
+        engine = subprocess.Popen([sys.executable, "-m", "app.serve"], cwd=ENGINE_DIR, env=env)
         try:
             wait_for_engine()
             check_bridge_rejects_missing_token()

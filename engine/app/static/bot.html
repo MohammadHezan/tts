@@ -17,8 +17,10 @@
 <main>
   <section id="warnings" class="warnings" hidden></section>
 
+  <p id="readiness" class="hint">Checking the interpreter…</p>
+
   <section class="controls">
-    <label for="meeting-url">Zoom or Google Meet link</label>
+    <label for="meeting-url">Meeting link (Google Meet, Teams or Zoom)</label>
     <input id="meeting-url" type="url" autocomplete="off" spellcheck="false"
            placeholder="https://meet.google.com/abc-defg-hij" />
     <label for="bot-name">Bot name shown in the meeting</label>
@@ -27,6 +29,8 @@
     <button id="remove-bot" class="secondary" hidden>Remove bot</button>
     <p id="bot-hint" class="hint"></p>
   </section>
+
+  <p id="phone-hint" class="hint" hidden></p>
 
   <section id="turns" class="turns"></section>
 </main>
