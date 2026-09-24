@@ -66,6 +66,11 @@ exe = EXE(
     upx=False,
     console=True,  # keep a console window so users can see engine logs/errors
     disable_windowed_traceback=False,
+    # Flat layout: config.yaml / glossary.yaml / .env next to the executable,
+    # where app/config.py looks and where a user can edit them. PyInstaller 6's
+    # default ("_internal/") hid them from it, and the app silently fell back
+    # to built-in defaults - no glossary, no en/ar language restriction.
+    contents_directory=".",
 )
 coll = COLLECT(
     exe,
