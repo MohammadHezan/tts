@@ -36,7 +36,11 @@ Windows and Linux both build from the exact same `engine/desktop_launcher.spec`
      "Setup" below).
    - **`interpreter-android-debug`** → unzip, install the `.apk` on your
      phone. It's a debug build (not on Play Store), so Android will ask you
-     to allow "install from unknown sources" once.
+     to allow "install from unknown sources" once. **Easier on the phone:**
+     every Android build also publishes the APK to the
+     [android-latest pre-release](https://github.com/MohammadHezan/tts/releases/tag/android-latest) -
+     open that page on the phone and tap `Interpreter-debug.apk`, no login or
+     unzipping.
 
 Requires being signed into GitHub with access to this (private) repo to
 download any artifact.

@@ -17,6 +17,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the APK to the android-latest pre-release (step below)
     defaults:
       run:
         working-directory: android
@@ -41,3 +43,19 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
           if-no-files-found: error
+
+      # Artifacts need a GitHub login and come zipped - awkward on a phone. A
+      # pre-release asset is one tap: open the link on the phone, install.
+      - name: Publish to the android-latest pre-release (direct phone download)
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk Interpreter-debug.apk
+          NOTES="Debug build of the Android app from commit ${GITHUB_SHA} (run ${GITHUB_RUN_ID}). Open this page on the phone, tap Interpreter-debug.apk, install. Replaced on every build."
+          if ! gh release view android-latest >/dev/null 2>&1; then
+            gh release create android-latest --prerelease --target "$GITHUB_SHA" \
+              --title "Android app - latest build" --notes "$NOTES"
+          fi
+          gh release upload android-latest Interpreter-debug.apk --clobber
+          gh release edit android-latest --notes "$NOTES"
