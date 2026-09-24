@@ -87,14 +87,23 @@ jobs:
         if: steps.exists.outputs.yes == 'false'
       - name: Build Attendee v${{ env.ATTENDEE_VERSION }} unmodified and publish it
         if: steps.exists.outputs.yes == 'false'
-        uses: docker/build-push-action@v6
-        with:
-          context: https://github.com/attendee-labs/attendee.git#v${{ env.ATTENDEE_VERSION }}
-          push: true
-          tags: ${{ env.ATTENDEE_IMAGE }}:${{ env.ATTENDEE_VERSION }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=Attendee v${{ env.ATTENDEE_VERSION }} (github.com/attendee-labs/attendee, Elastic License 2.0), built unmodified for the Meeting Interpreter
+        # Attendee's Dockerfile runs a dozen apt-get updates against Ubuntu's
+        # mirrors, which fail now and then mid-sync ("File has unexpected
+        # size ... Mirror sync in progress?"). Layers that did build stay in
+        # the builder's cache, so a retry resumes at the step that failed.
+        run: |
+          for attempt in 1 2 3 4; do
+            if docker buildx build --push \
+                --tag "$ATTENDEE_IMAGE:$ATTENDEE_VERSION" \
+                --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+                --label "org.opencontainers.image.description=Attendee v$ATTENDEE_VERSION (github.com/attendee-labs/attendee, Elastic License 2.0), built unmodified for the Meeting Interpreter" \
+                "https://github.com/attendee-labs/attendee.git#v$ATTENDEE_VERSION"; then
+              exit 0
+            fi
+            echo "::warning::Attendee image build attempt $attempt failed; retrying in $((attempt * 90))s"
+            sleep $((attempt * 90))
+          done
+          exit 1
 
   windows-script:
     runs-on: windows-latest
