@@ -62,7 +62,7 @@ async def test_the_voice_for_each_language(monkeypatch: pytest.MonkeyPatch) -> N
     audio = await tts.synthesize("مرحبا بكم", "ar")
     await tts.synthesize("Welcome", "en")
     assert len(audio.pcm16) > 0
-    assert [c[1] for c in calls] == ["ar-JO-TaimNeural", "en-US-AndrewNeural"]
+    assert [c[1:] for c in calls] == [("ar-JO-TaimNeural", "-10%"), ("en-US-AndrewNeural", "-15%")]
     assert local.spoken == []  # never loaded while the service works
 
 

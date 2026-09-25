@@ -15,13 +15,18 @@ One Pipeline per bot connection. It already auto-detects the spoken language
 and flips translation direction per utterance, so one bot handles both sides
 of an EN<->AR conversation.
 
+The Pipeline runs in background mode: it keeps listening and transcribing
+while earlier phrases are translated and spoken, in order.
+
 Zoom/Meet never send the bot its own audio, but its voice can still come back:
 out of one participant's speaker and into another's microphone (two phones in
 one room, a laptop without headphones). Translated again, that loops. So the
-bridge is half-duplex - while the bot speaks, and for ECHO_TAIL_S after, the
-meeting's audio is replaced with silence - and it drops a transcript that
-matches something the bot said moments ago. People talking over the
-interpreter are not heard; with consecutive interpretation they wait for it.
+bridge drops a transcript that matches something the bot said moments ago
+(EchoGuard). With half_duplex it also ignores the meeting while the bot
+speaks, and for ECHO_TAIL_S after - for whole-sentence (consecutive)
+interpretation, where people wait for the bot. Phrase by phrase
+(vad.phrase_min_ms) the bot speaks while the speaker carries on, so the
+meeting is never ignored: that would cut them off mid-sentence.
 
 BotControls holds what the dashboard and the phone can switch mid-meeting:
 muted, the bot stops speaking (and skips synthesizing), captions keep going.
@@ -165,11 +170,12 @@ async def run_bridge(
     frame_bytes: int,
     hub: BotEventHub,
     controls: BotControls | None = None,
+    half_duplex: bool = True,
 ) -> None:
     """Serve one Attendee bot connection until it disconnects.
 
-    pipeline_factory(accept_transcript=..., should_speak=...) builds the
-    Pipeline, passing both hooks on to it.
+    pipeline_factory(accept_transcript=..., should_speak=..., background=True)
+    builds the Pipeline, passing these on to it.
     """
     logger = get_logger()
     controls = controls or BotControls()
@@ -187,6 +193,7 @@ async def run_bridge(
     pipeline = pipeline_factory(
         accept_transcript=accept_transcript,
         should_speak=lambda: not controls.is_muted(bot_id),
+        background=True,
     )
     frames: asyncio.Queue[bytes | None] = asyncio.Queue()
     outgoing: asyncio.Queue[str | None] = asyncio.Queue()
@@ -211,16 +218,21 @@ async def run_bridge(
             hub.publish(bot_id, event.model_dump_json(exclude={"audio"}))
 
     async def process() -> None:
-        # Its own task, so the socket keeps being read while a turn is being
-        # transcribed, translated and spoken (seconds, on CPU) - the meeting's
-        # audio queues here in order instead of backing up inside Attendee.
+        # Its own task, so the socket keeps being read while a phrase is being
+        # transcribed (seconds, on CPU) - the meeting's audio queues here in
+        # order instead of backing up inside Attendee.
         while (frame := await frames.get()) is not None:
             async for event in pipeline.process_frame(frame):
                 handle(event)
-        async for event in pipeline.flush():
+        async for event in pipeline.flush():  # also waits for the translation queue
+            handle(event)
+
+    async def interpret() -> None:
+        async for event in pipeline.background_events():
             handle(event)
 
     sender = asyncio.create_task(send_paced())
+    interpreter = asyncio.create_task(interpret())
     processor = asyncio.create_task(process())
     log_event(logger, logging.INFO, "attendee_bot_connected")
     buffer = bytearray()
@@ -236,7 +248,7 @@ async def run_bridge(
             chunk = resample(
                 base64.b64decode(data["chunk"]), data.get("sample_rate", ATTENDEE_SAMPLE_RATE), pipeline_sample_rate
             )
-            if time.monotonic() < speaking_until:
+            if half_duplex and time.monotonic() < speaking_until:
                 # Silence rather than dropping the audio, so the endpointer's
                 # timing stays true and an open utterance still ends.
                 chunk = bytes(len(chunk))
@@ -251,7 +263,10 @@ async def run_bridge(
         frames.put_nowait(None)
         try:
             await processor  # finish what was already heard, so its captions still reach the dashboard
+            await interpreter
         finally:
+            interpreter.cancel()  # only still running if processing crashed
+            pipeline.close()
             outgoing.put_nowait(None)
             try:
                 await sender

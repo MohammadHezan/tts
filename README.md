@@ -537,10 +537,11 @@ phrases like "شكراً" / "Thank you" / "ترجمة نانسي قنقر" in si
   it rates as likely non-speech are dropped, and its stock phrases are dropped
   when they're the whole utterance (`providers/asr_faster_whisper.py`);
 - the bot's own voice can come back through someone's speaker into another
-  microphone (two phones in one room) and would loop: the bridge ignores the
-  call's audio while the bot speaks and for 1.5s after, and drops a transcript
-  matching something it just said (`attendee_bridge.py`). People talking over
-  the interpreter aren't heard - with consecutive interpretation they wait.
+  microphone (two phones in one room) and would loop: the bridge drops a
+  transcript matching something it just said (`attendee_bridge.py`). With
+  whole-sentence interpretation (no `vad.phrase_min_ms`) it also ignores the
+  call's audio while the bot speaks and for 1.5s after; phrase by phrase it
+  can't, since people are still talking - use earbuds for devices in one room.
 The two-device simulation plays 20s of room noise, clicks and breaths before
 the first turn and fails if the bot says anything.
 
@@ -548,10 +549,17 @@ the first turn and fails if the bot says anything.
 meeting but silent (it stops mid-sentence, and skips synthesizing); captions
 keep coming. *Unmute* brings its voice back (`POST /api/bots/{id}/mute`).
 
-**How it behaves in a call**: everyone hears the bot's translation after each
-sentence (consecutive interpretation, not simultaneous) - speaker finishes, a
-few seconds later the bot says it in the other language. The bot never hears
-itself (Zoom/Meet don't send you your own audio), so it can't loop. Each bot
+**How it behaves in a call**: phrase by phrase, like a live interpreter. Once
+someone has talked for 3.5s (about 10 words), the next short pause (250ms)
+hands that phrase on - or, with no pause by 8s, the quietest moment
+(`vad.phrase_*` in `deploy/config.docker*.yaml`). The pipeline runs in
+background mode for the bot (`Pipeline(background=True)`): it keeps listening
+and transcribing while earlier phrases are translated and spoken, in order;
+phrases that queue up from the same speaker (a slow computer falling behind)
+are translated together. The translator is told a message may be part of a
+sentence, and gets the previous phrases as context. Short sentences work as
+before: said a moment after the speaker stops. The bot never hears itself
+(Zoom/Meet don't send you your own audio). Each bot
 loads its own Whisper model, so two bots at once means two models in memory.
 Attendee's defaults decide when it leaves on its own: 60s after everyone else
 has left, or after 10 minutes of silence once it has been in for 20 minutes.

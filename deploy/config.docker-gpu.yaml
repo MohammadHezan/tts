@@ -28,6 +28,13 @@ vad:
   speech_pad_ms: 200
   min_utterance_dbfs: -50 # quieter than this is noise, not someone talking
   min_voiced_ms: 45 # breaths/clicks/keyboard have no voice pitch at all; a one-word "yes" has 60+ms
+  # Phrase by phrase, like a live interpreter: after 3.5s of talking (about 10
+  # words) the next short pause hands that phrase on to be translated and
+  # spoken while the speaker carries on. Remove phrase_min_ms to wait for
+  # whole sentences instead.
+  phrase_min_ms: 3500
+  phrase_pause_ms: 250
+  phrase_max_ms: 8000 # no pause by then: cut at the quietest moment
 
 asr:
   provider: faster_whisper
@@ -70,7 +77,9 @@ tts:
     voices:
       en: en-US-AndrewNeural
       ar: ar-JO-TaimNeural
-    rate: "+0%"   # "-10%" = slower, "+10%" = faster
+    rates: # relative to the voice's own pace: "-10%" slower, "+10%" faster
+      en: "-15%"
+      ar: "-10%"
     timeout_s: 6.0
   kokoro:
     model_path: /models/kokoro-v1.0.onnx

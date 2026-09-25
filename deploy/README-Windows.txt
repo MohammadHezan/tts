@@ -42,8 +42,12 @@ NEEDS: Windows 10/11, 16 GB of memory, about 20 GB of free disk space.
       itself (same Wi-Fi). Paste the link, tap "Send interpreter into
       meeting". (Or paste it on the page that opened on this PC.)
    3. In Meet, let "AI Interpreter" in.
-   4. Talk. After each sentence the interpreter says it in the other
-      language, about 10-15 seconds later.
+   4. Talk normally. The interpreter says it in the other language phrase
+      by phrase (about every 10 words), even while you carry on - a few
+      seconds behind with an NVIDIA graphics card, 10-15 seconds without.
+   5. To silence it: tap Mute, or anyone types "mute" in the meeting chat
+      ("unmute" to hear it again; Arabic: "اسكت" / "تكلم").
+   Two phones in one room? Use earbuds, or they hear each other.
 
 
 STOP:  double-click  "Stop Interpreter"

@@ -26,9 +26,11 @@ USE IT
      computer by itself (same Wi-Fi). Or use the page on this computer.
   3. Paste the link and tap "Send interpreter into meeting".
   4. In Meet, let "AI Interpreter" in.
-  5. Talk. After each sentence, the interpreter says it in the other
-     language (about 10-15 seconds later on a computer without a
-     graphics card).
+  5. Talk normally. The interpreter says it in the other language phrase
+     by phrase (about every 10 words), even while you carry on - a few
+     seconds behind with a graphics card, 10-15 seconds without one.
+  6. To silence it, tap Mute (app or page), or anyone types "mute" in the
+     meeting chat ("unmute" to hear it again; Arabic: "اسكت" / "تكلم").
 
 STOP
   Linux/Mac: ./stop.sh
@@ -38,4 +40,7 @@ TIPS
   - Google Meet and Microsoft Teams work as they are. Zoom needs extra
     Zoom developer setup - use Meet for testing.
   - Testing with two phones in one room? Use earbuds, or put the phones in
-    different rooms, or they will hear each other.
+    different rooms, or they will hear each other - and the interpreter
+    speaks while people are still talking, so its voice gets in too.
+  - Its voices are Microsoft's natural voices and need internet. Without
+    it, a built-in voice speaks instead.

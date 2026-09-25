@@ -374,6 +374,7 @@ async def attendee_bridge(ws: WebSocket) -> None:
         frame_bytes,
         _bot_hub,
         _bot_controls,
+        half_duplex=_cfg.vad.phrase_min_ms is None,  # phrase by phrase, people talk while it speaks
     )
     warm_up.cancel()
 

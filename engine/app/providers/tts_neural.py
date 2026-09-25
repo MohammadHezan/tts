@@ -56,7 +56,8 @@ class NeuralVoiceTts(TtsProvider):
         voice = self._cfg.neural.voices.get(lang)
         if voice and time.monotonic() >= self._paused_until:
             try:
-                audio = await asyncio.wait_for(self._neural(text, voice), timeout=self._cfg.neural.timeout_s)
+                rate = self._cfg.neural.rates.get(lang, "+0%")
+                audio = await asyncio.wait_for(self._neural(text, voice, rate), timeout=self._cfg.neural.timeout_s)
                 self._failures = 0
                 spoken["neural"] += 1
                 return audio
@@ -74,11 +75,11 @@ class NeuralVoiceTts(TtsProvider):
         spoken["local"] += 1
         return audio
 
-    async def _neural(self, text: str, voice: str) -> TtsAudio:
+    async def _neural(self, text: str, voice: str, rate: str) -> TtsAudio:
         import edge_tts
 
         data = bytearray()
-        async for chunk in edge_tts.Communicate(text, voice, rate=self._cfg.neural.rate).stream():
+        async for chunk in edge_tts.Communicate(text, voice, rate=rate).stream():
             if chunk["type"] == "audio":
                 data += chunk["data"]
         if not data:

@@ -107,7 +107,20 @@ SCRIPT = (
         (r"deliver", r"three|\b3\b", r"week"),
         (r"deliver", r"three|\b3\b", r"week"),
     ),
+    # A long one, spoken without waiting: the bot hands it on phrase by phrase
+    # (vad.phrase_min_ms) instead of waiting for the end - checked by "phrases".
+    Line(
+        "B", "ar",
+        "اسمحوا لي أن أشرح لكم العرض، كل قطعة مصنوعة يدوياً من خشب الجوز الطبيعي، "
+        "والتوصيل مجاني داخل عمّان، ونقدم ضماناً لمدة خمس سنوات على جميع الكنب والطاولات.",
+        "Let me explain the offer: every piece is handmade from natural walnut wood, delivery is free "
+        "within Amman, and we give a five-year warranty on all sofas and tables.",
+        (r"walnut|nut|wood", r"free", r"warrant|guarant", r"five|\b5\b"),
+        (r"walnut", r"free", r"warrant|guarant", r"five|\b5\b"),
+    ),
 )
+# Lines at least this long are expected to be interpreted in more than one phrase.
+PHRASE_LINE_S = 8.0
 DEVICES = {"A": "Device A - Sarah (speaks English)", "B": "Device B - Omar (speaks Arabic)"}
 OTHER = {"A": "B", "B": "A"}
 SPEAKER_VOICES = {"en": "en_US-lessac-medium.onnx", "ar": "ar_JO-kareem-low.onnx"}
@@ -401,6 +414,7 @@ class Turn:
     speech_seconds: float = 0.0
     heard: str = ""
     heard_lang: str = ""
+    phrases: int = 0  # transcripts the bot made of it (more than one: phrase by phrase)
     said: str = ""
     said_lang: str = ""
     errors: list[str] = field(default_factory=list)
@@ -410,6 +424,7 @@ class Turn:
     timed_out: bool = False
     listener_heard: str = ""  # listener-side Whisper, in the language the bot spoke
     listener_english: str = ""  # ... and in English, for the key-word check
+    listener_wer: float | None = None  # listener's words vs the bot's
     wer: float | None = None
     terms_missing: list[str] = field(default_factory=list)
     length_ratio: float | None = None
@@ -428,7 +443,11 @@ async def run_turn(meeting: Meeting, feed: CaptionFeed, line: Line, pcm: np.ndar
         await asyncio.sleep(0.25)
         events = feed.events[first_event:]
         chunks = meeting.bot_chunks[first_chunk:]
-        answered = any(e["type"] in ("translation", "error") for _, e in events)
+        # Answered once the last thing heard has its translation - a long line
+        # comes back phrase by phrase, and may still be queued behind the first.
+        heard = [e["turn_id"] for _, e in events if e["type"] == "final" and e["text"]]
+        replied = {e["turn_id"] for _, e in events if e["type"] in ("translation", "error")}
+        answered = bool(heard) and heard[-1] in replied
         heard_nothing = any(e["type"] == "final" and not e["text"] for _, e in events)
         last_activity = max([t for t, _ in events] + [t for t, _ in chunks] + [utterance.end_time])
         quiet = time.monotonic() - last_activity > idle_s and not meeting.bot_still_talking()
@@ -443,6 +462,7 @@ async def run_turn(meeting: Meeting, feed: CaptionFeed, line: Line, pcm: np.ndar
     finals = [e for _, e in events if e["type"] == "final" and e["text"]]
     translations = [(t, e) for t, e in events if e["type"] == "translation"]
     turn.heard = " ".join(e["text"] for e in finals)
+    turn.phrases = len(finals)
     turn.heard_lang = finals[0]["lang"] if finals else ""
     turn.said = " ".join(e["text"] for _, e in translations)
     turn.said_lang = translations[0][1]["lang"] if translations else ""
@@ -459,6 +479,7 @@ async def run_turn(meeting: Meeting, feed: CaptionFeed, line: Line, pcm: np.ndar
 
 _AR_DIACRITICS = re.compile(r"[ً-ْـ]")
 _NUMBERS = {"20": "twenty", "3": "three"}
+_NUMBERS_AR = {"20": "عشرين", "عشرون": "عشرين", "3": "ثلاثه", "ثلاث": "ثلاثه"}  # after normalize's ة -> ه
 
 
 def normalize(text: str, lang: str, spell_numbers: bool = True) -> str:
@@ -467,7 +488,8 @@ def normalize(text: str, lang: str, spell_numbers: bool = True) -> str:
         text = _AR_DIACRITICS.sub("", text)
         text = re.sub("[أإآ]", "ا", text).replace("ة", "ه").replace("ى", "ي")
     text = re.sub(r"[^\w\s]", " ", text)
-    words = [_NUMBERS.get(w, w) if spell_numbers else w for w in text.split()]
+    numbers = _NUMBERS_AR if lang == "ar" else _NUMBERS
+    words = [numbers.get(w, w) if spell_numbers else w for w in text.split()]
     return " ".join(words)
 
 
@@ -501,17 +523,25 @@ def check_turn(turn: Turn, ears: ListenerEars | None, fake_engine: bool) -> None
         turn.terms_missing = [t for t in line.terms if not re.search(t, said)]
         turn.length_ratio = len(turn.said) / max(1, len(line.text))
         turn.checks["faithful"] = not turn.terms_missing and turn.length_ratio <= 2.0
+    if turn.speech_seconds >= PHRASE_LINE_S and not fake_engine:
+        turn.checks["phrases"] = turn.phrases >= 2
     turn.checks["spoke"] = len(turn.bot_audio) >= SAMPLE_RATE // 2
     turn.checks["no errors"] = not turn.errors and not turn.timed_out
 
     if ears is None or not turn.checks["spoke"] or fake_engine:
         turn.checks["understood"] = None  # not checked
         return
+    # Can a listener make out the bot's words? A separate Whisper writes down
+    # what it hears, which should be what the bot said. For English, the key
+    # words must be there too. (For Arabic that would take Whisper's own
+    # Arabic -> English translation, too weak to judge the bot by - reported only.)
     turn.listener_heard = ears.transcribe(turn.bot_audio, target)
+    turn.listener_wer = word_error_rate(turn.said, turn.listener_heard, target)
     turn.listener_english = turn.listener_heard if target == "en" else ears.in_english(turn.bot_audio, target)
     english = turn.listener_english.lower()
     turn.keys_found = [key for key in line.keys if re.search(key, english)]
-    turn.checks["understood"] = len(turn.keys_found) >= len(line.keys) - 1
+    clear = turn.listener_wer <= (0.25 if target == "en" else 0.35)
+    turn.checks["understood"] = clear and (target != "en" or len(turn.keys_found) >= len(line.keys) - 1)
 
 
 OTHER_LANG = {"en": "ar", "ar": "en"}
@@ -554,7 +584,7 @@ def write_report(
     lines += [f"- **{key}**: {value}" for key, value in info.items()]
     if voice_delays:
         lines.append(
-            f"- **Delay** (speaker stops -> listener hears the translation): "
+            f"- **Delay** (speaker stops -> listener hears the translation; below 0 = the bot started while they were still talking): "
             f"median {statistics.median(voice_delays):.1f}s, worst {max(voice_delays):.1f}s"
         )
     for lang, name in (("en", "English"), ("ar", "Arabic")):
@@ -570,7 +600,11 @@ def write_report(
         checks = ", ".join(f"{name} {_mark(v)}" for name, v in t.checks.items())
         heard_note = f" *(WER {t.wer:.0%})*" if t.wer is not None else ""
         listener = t.listener_heard + (f" *({t.listener_english})*" if t.listener_english and t.listener_english != t.listener_heard else "")
+        if t.listener_wer is not None:
+            listener += f" *(WER {t.listener_wer:.0%})*"
         voice_after = f"{t.voice_after_s:.1f}s" if t.voice_after_s is not None else "-"
+        if t.phrases > 1:
+            voice_after += f" *({t.phrases} phrases, speaker talked {t.speech_seconds:.0f}s)*"
         cells = [
             str(i), DEVICES[t.line.device].split(" - ")[1], t.line.text, (t.heard or "-") + heard_note,
             t.said or "-", listener or "-", voice_after, checks,
@@ -602,12 +636,13 @@ def write_report(
         "turns": [
             {
                 "speaker": t.line.device, "lang": t.line.lang, "said": t.line.text, "meaning_en": t.line.meaning_en,
-                "bot_heard": t.heard, "bot_heard_lang": t.heard_lang, "wer": t.wer,
+                "bot_heard": t.heard, "bot_heard_lang": t.heard_lang, "wer": t.wer, "phrases": t.phrases,
+                "speech_seconds": round(t.speech_seconds, 2),
                 "bot_said": t.said, "bot_said_lang": t.said_lang, "errors": t.errors, "timed_out": t.timed_out,
                 "bot_voice_seconds": round(len(t.bot_audio) / SAMPLE_RATE, 2),
                 "bot_voice_wpm": speaking_pace_wpm(t.said, t.bot_audio),
                 "voice_after_s": t.voice_after_s, "text_after_s": t.text_after_s,
-                "listener_heard": t.listener_heard, "listener_english": t.listener_english,
+                "listener_heard": t.listener_heard, "listener_english": t.listener_english, "listener_wer": t.listener_wer,
                 "keys": list(t.line.keys), "keys_found": t.keys_found,
                 "terms": list(t.line.terms), "terms_missing": t.terms_missing, "length_ratio": t.length_ratio,
                 "checks": t.checks,

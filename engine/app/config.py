@@ -62,6 +62,14 @@ class VadConfig(BaseModel):
     # Utterances with less voiced sound than this (vocal cords vibrating - see
     # app/voicing.py) are dropped before ASR: breaths, clicks, a chair. None = off.
     min_voiced_ms: int | None = None
+    # Phrase by phrase: once someone has been talking for phrase_min_ms, the
+    # next pause of phrase_pause_ms ends a phrase (~10 words) that is
+    # translated while they carry on; past phrase_max_ms without such a pause,
+    # the phrase ends at the quietest moment of the last second. None = whole
+    # utterances only (they end after min_silence_ms of silence).
+    phrase_min_ms: int | None = None
+    phrase_pause_ms: int = 250
+    phrase_max_ms: int | None = 8000
 
 
 class AsrConfig(BaseModel):
@@ -134,7 +142,10 @@ class NeuralTtsConfig(BaseModel):
     piper above) take over for any sentence they can't deliver."""
 
     voices: dict[str, str] = Field(default_factory=lambda: {"en": "en-US-AndrewNeural", "ar": "ar-JO-TaimNeural"})
-    rate: str = "+0%"  # the voices' own pace is conversational; "-10%" is slower
+    # Speaking rate per language, relative to the voice's own. At "+0%" they
+    # measured ~200 words/min (English) and ~150 (Arabic) in the meeting
+    # simulation - brisk for a call; these bring both to a conversational pace.
+    rates: dict[str, str] = Field(default_factory=lambda: {"en": "-15%", "ar": "-10%"})
     timeout_s: float = 6.0
 
 
