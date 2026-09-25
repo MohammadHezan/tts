@@ -349,6 +349,37 @@ class CaptionFeed:
             self.error = repr(error)
 
 
+def room_noise(seconds: float, seed: int = 7) -> np.ndarray:
+    """Nobody talking: a room's hum, keyboard clicks and a few breaths - what a
+    call carries between sentences, and what Whisper likes to "hear" as
+    "شكراً" / "Thank you" if nothing stops it."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * SAMPLE_RATE)
+    hum = np.cumsum(rng.standard_normal(n))  # brown noise: low rumble
+    hum = (hum - np.convolve(hum, np.ones(400) / 400, mode="same")) * 25  # drop the DC drift, about -45 dBFS
+    audio = hum.astype(np.float64)
+    for at in rng.uniform(0.5, seconds - 0.5, size=int(seconds * 1.5)):  # clicks, -20 dBFS peaks
+        start = int(at * SAMPLE_RATE)
+        audio[start : start + 80] += rng.standard_normal(80) * 3000 * np.exp(-np.arange(80) / 15)
+    for at in rng.uniform(1.0, seconds - 1.0, size=3):  # breaths: 0.4s of shaped noise
+        start, length = int(at * SAMPLE_RATE), int(0.4 * SAMPLE_RATE)
+        envelope = np.sin(np.linspace(0, np.pi, length)) ** 2
+        audio[start : start + length] += rng.standard_normal(length) * 600 * envelope
+    return np.clip(audio, -32768, 32767).astype(np.int16)
+
+
+async def check_silence(meeting: Meeting, feed: CaptionFeed, seconds: float, idle_s: float) -> tuple[bool, str]:
+    """Plays only noise into the call; the bot must neither caption nor speak."""
+    bot_chunks_before, events_before = len(meeting.bot_chunks), len(feed.events)
+    await meeting.say("A", room_noise(seconds))
+    await asyncio.sleep(idle_s + 4)  # long enough for a phantom turn to be translated and spoken
+    spoken = sum(len(pcm) for _, pcm in meeting.bot_chunks[bot_chunks_before:]) / SAMPLE_RATE
+    heard = [e.get("text") for _, e in feed.events[events_before:] if e.get("type") in ("final", "translation") and e.get("text")]
+    ok = spoken == 0 and not heard
+    detail = "bot stayed silent" if ok else f"bot spoke {spoken:.1f}s, captioned {heard!r}"
+    return ok, detail
+
+
 # --- one turn ------------------------------------------------------------------
 
 
@@ -481,9 +512,11 @@ def _mark(value: bool | None) -> str:
     return "n/a" if value is None else ("PASS" if value else "FAIL")
 
 
-def write_report(out: Path, turns: list[Turn], meeting: Meeting, feed: CaptionFeed, info: dict[str, str]) -> bool:
+def write_report(
+    out: Path, turns: list[Turn], meeting: Meeting, feed: CaptionFeed, info: dict[str, str], other_checks_ok: bool = True
+) -> bool:
     passed = all(v is not False for t in turns for v in t.checks.values()) and len(turns) == len(SCRIPT)
-    passed = passed and meeting.error is None and feed.error is None
+    passed = passed and meeting.error is None and feed.error is None and other_checks_ok
     voice_delays = [t.voice_after_s for t in turns if t.voice_after_s is not None]
     lines = [
         f"# Two-device meeting simulation: {'PASS' if passed else 'FAIL'}",
@@ -610,6 +643,10 @@ async def simulate(args: argparse.Namespace, engine_url: str, api_key: str) -> b
     print(f"Bot joined the call; letting it settle for {args.settle_s:.0f}s (loads Whisper, warms up translation)", flush=True)
     await asyncio.sleep(args.settle_s)
 
+    print(f"\nNobody speaks for {args.noise_s:.0f}s - only room noise, clicks and breaths in the call", flush=True)
+    silence_ok, silence_detail = await check_silence(meeting, feed, args.noise_s, args.idle_s)
+    print(f"  {'PASS' if silence_ok else 'FAIL'}: {silence_detail}", flush=True)
+
     turns: list[Turn] = []
     for i, (line, pcm) in enumerate(zip(SCRIPT, lines_audio, strict=True), 1):
         print(f"\nTurn {i}: {DEVICES[line.device]} says: {line.text}", flush=True)
@@ -660,18 +697,35 @@ async def simulate(args: argparse.Namespace, engine_url: str, api_key: str) -> b
         "Speaker voices": f"Sarah = {voices['en'].name}, Omar = {voices['ar'].name}",
         "Listener check": f"faster-whisper {ears.model_name}" if ears else "not run",
     }
+    info["Noise only, nobody speaking"] = f"{'PASS' if silence_ok else 'FAIL'} - {silence_detail} ({args.noise_s:.0f}s of room noise, clicks, breaths)"
     info.update(dict(item.split("=", 1) for item in args.info))
-    passed = write_report(out, turns, meeting, feed, info)
+    passed = write_report(out, turns, meeting, feed, info, other_checks_ok=silence_ok)
     print("\n" + (out / "report.md").read_text(encoding="utf-8"), flush=True)
     return passed
 
 
-def start_fake_engine(tmp_dir: Path, port: int, meeting_port: int, api_key: str) -> subprocess.Popen[bytes]:
-    from scripts.verify_web_client import build_fake_config
+def build_meeting_fake_config(tmp_dir: Path) -> Path:
+    """Fake ASR/translation/voice, but the shipped meeting config's speech
+    detection (deploy/config.docker.yaml), so the noise check tests what ships."""
+    import yaml
 
+    shipped = yaml.safe_load((ENGINE_DIR.parent / "deploy" / "config.docker.yaml").read_text(encoding="utf-8"))
+    config = {
+        "audio": shipped["audio"],
+        "vad": shipped["vad"],
+        "asr": {"provider": "fake"},
+        "translator": {"provider": "fake", "glossary_path": None},
+        "tts": {"provider": "fake"},
+    }
+    path = tmp_dir / "config.meeting-fake.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return path
+
+
+def start_fake_engine(tmp_dir: Path, port: int, meeting_port: int, api_key: str) -> subprocess.Popen[bytes]:
     env = {
         **os.environ,
-        "ENGINE_CONFIG_PATH": str(build_fake_config(tmp_dir)),
+        "ENGINE_CONFIG_PATH": str(build_meeting_fake_config(tmp_dir)),
         "ATTENDEE_BASE_URL": f"http://127.0.0.1:{meeting_port}",
         "ATTENDEE_API_KEY": api_key,
         "ATTENDEE_CALLBACK_WS_URL": f"ws://127.0.0.1:{port}/attendee/ws",
@@ -702,6 +756,7 @@ def main() -> int:
     parser.add_argument("--listener-model", default="small", help="Whisper model for the listener check ('' to skip)")
     parser.add_argument("--settle-s", type=float, default=20.0, help="silence after the bot joins, before anyone speaks")
     parser.add_argument("--idle-s", type=float, default=6.0, help="bot quiet this long after answering = turn over")
+    parser.add_argument("--noise-s", type=float, default=20.0, help="room noise with nobody talking, before the first turn; the bot must stay silent")
     parser.add_argument("--turn-timeout-s", type=float, default=300.0)
     parser.add_argument("--dashboard", action="store_true", help="send the bot from bot.html in a headless browser and screenshot it")
     parser.add_argument("--chromium-path", default=None)

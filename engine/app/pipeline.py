@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import numpy as np
 
@@ -25,8 +25,17 @@ from app.providers.base import AsrProvider, TranslatorProvider, TtsProvider, Tur
 from app.segmenter import segment as segment_sentences
 from app.schema import EventType, PipelineEvent, new_turn_id
 from app.vad import SpeechEndpointer, VadEvent, VadEventType
+from app.voicing import voiced_ms
 
 _LOGGER = get_logger()
+
+
+def rms_dbfs(pcm16: np.ndarray) -> float:
+    """Loudness of 16-bit audio: 0 dBFS is full scale, silence is about -96."""
+    if len(pcm16) == 0:
+        return -96.0
+    rms = float(np.sqrt(np.mean(np.square(pcm16.astype(np.float64)))))
+    return 20 * np.log10(max(rms, 1.0) / 32768.0)
 
 
 class Pipeline:
@@ -37,8 +46,15 @@ class Pipeline:
         translator: TranslatorProvider,
         tts: TtsProvider | None = None,
         emit_partials: bool = True,
+        accept_transcript: Callable[[str, str], bool] | None = None,
+        should_speak: Callable[[], bool] | None = None,
     ) -> None:
         self._cfg = cfg
+        # accept_transcript(text, lang): False drops the utterance as if it were
+        # silence (the meeting bridge uses it to ignore its own voice coming
+        # back). should_speak(): False skips TTS for now (the bot is muted).
+        self._accept_transcript = accept_transcript
+        self._should_speak = should_speak
         # Partials only feed live captions. A meeting bot never shows them, and
         # on CPU each re-decode steals the time the final transcript needs.
         self._emit_partials = emit_partials
@@ -115,11 +131,29 @@ class Pipeline:
         assert tracker is not None
         self._speech_end_perf = time.perf_counter()
 
+        floor = self._cfg.vad.min_utterance_dbfs
+        if floor is not None and (level := rms_dbfs(vad_event.audio)) < floor:
+            log_event(_LOGGER, logging.INFO, "utterance_too_quiet", turn_id=turn_id, dbfs=round(level, 1))
+            self._turn_id = None
+            self._tracker = None
+            return
+        min_voiced = self._cfg.vad.min_voiced_ms
+        if min_voiced is not None and (voiced := voiced_ms(vad_event.audio, self._cfg.audio.sample_rate_hz)) < min_voiced:
+            log_event(_LOGGER, logging.INFO, "utterance_not_voiced", turn_id=turn_id, voiced_ms=voiced)
+            self._turn_id = None
+            self._tracker = None
+            return
+
         try:
             with tracker.stage("asr_final"):
                 hyp = await self._asr.finalize(vad_event.audio)
         except Exception as error:
             yield self._error_event(self._cfg.translator.source_lang, turn_id, "transcription", error)
+            self._turn_id = None
+            self._tracker = None
+            return
+        if hyp.text and self._accept_transcript is not None and not self._accept_transcript(hyp.text, hyp.language):
+            log_event(_LOGGER, logging.INFO, "transcript_rejected", turn_id=turn_id, lang=hyp.language)
             self._turn_id = None
             self._tracker = None
             return
@@ -164,7 +198,7 @@ class Pipeline:
                     is_final_segment=True,
                 )
 
-                if self._tts is not None:
+                if self._tts is not None and (self._should_speak is None or self._should_speak()):
                     try:
                         with tracker.stage(f"tts[{i}]"):
                             audio = await self._tts.synthesize(translated, target_lang)

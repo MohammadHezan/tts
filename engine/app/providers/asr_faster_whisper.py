@@ -26,6 +26,11 @@ import numpy as np
 from app.audio_utils import pcm16_to_float32
 from app.config import AsrConfig
 from app.providers.base import AsrHypothesis, AsrProvider
+from app.text_normalize import normalize_text
+
+
+# "<model> on <device>" of the most recently loaded model, for the dashboard.
+last_loaded: str | None = None
 
 
 def _resolve_device_and_compute_type(cfg: AsrConfig) -> tuple[str, str]:
@@ -38,6 +43,43 @@ def _resolve_device_and_compute_type(cfg: AsrConfig) -> tuple[str, str]:
     if compute_type == "auto":
         compute_type = "float16" if device == "cuda" else "int8"
     return device, compute_type
+
+
+# What Whisper "hears" in silence, breathing, keyboard noise or a call's comfort
+# noise: phrases from the subtitles it was trained on. Dropped only when they
+# are the whole utterance - inside a real sentence they're kept. Normalized as
+# by normalize_text() (no diacritics, punctuation or case).
+KNOWN_HALLUCINATIONS = frozenset(
+    {
+        # Arabic
+        "شكرا", "شكرا لكم", "شكرا لك", "شكرا جزيلا", "شكرا جزيلا لكم",
+        "شكرا على المشاهدة", "شكرا لكم على المشاهدة", "شكرا للمشاهدة", "شكرا لمشاهدتكم",
+        "اشتركوا في القناة", "اشترك في القناة", "لا تنسوا الاشتراك في القناة",
+        "ترجمة نانسي قنقر", "نانسي قنقر", "موسيقى", "تصفيق",
+        # English
+        "thank you", "thank you very much", "thank you so much", "thanks",
+        "thanks for watching", "thank you for watching", "thank you so much for watching",
+        "please subscribe", "subscribe", "you", "music", "applause",
+        "subtitles by the amaraorg community",
+    }
+)
+def is_known_hallucination(text: str) -> bool:
+    return normalize_text(text) in KNOWN_HALLUCINATIONS
+
+
+def looks_like_non_speech(no_speech_prob: float, avg_logprob: float, compression_ratio: float) -> bool:
+    """Whisper's own per-segment signals that it transcribed something that wasn't speech.
+
+    Stricter than faster-whisper's defaults (which skip a segment only when
+    no_speech_prob > 0.6 *and* avg_logprob < -1): meeting audio is mostly
+    silence, so a false caption costs more than a missed mumble.
+    """
+    return (
+        no_speech_prob > 0.6
+        or (no_speech_prob > 0.3 and avg_logprob < -0.7)
+        or avg_logprob < -1.0
+        or compression_ratio > 2.4  # the same words over and over
+    )
 
 
 def _common_prefix_len(prev_words: list[str], curr_words: list[str]) -> int:
@@ -65,7 +107,27 @@ class FasterWhisperAsr(AsrProvider):
         self._cfg = cfg
         self._sample_rate = sample_rate
         device, compute_type = _resolve_device_and_compute_type(cfg)
-        self._model = WhisperModel(cfg.model, device=device, compute_type=compute_type)
+        model_name = cfg.model
+        try:
+            self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            if device == "cuda":
+                # cuBLAS/cuDNN are only loaded by the first inference, so a
+                # broken CUDA setup would otherwise surface mid-meeting.
+                segments, _ = self._model.transcribe(np.zeros(sample_rate, dtype=np.float32), language="en")
+                list(segments)
+        except Exception as error:
+            if device != "cuda" or not cfg.cpu_fallback_model:
+                raise
+            import logging
+
+            logging.getLogger("tts_engine").warning(
+                "ASR could not run %s on the GPU (%r); using %s on the CPU instead",
+                cfg.model, error, cfg.cpu_fallback_model,
+            )
+            device, model_name = "cpu", cfg.cpu_fallback_model
+            self._model = WhisperModel(model_name, device=device, compute_type="int8")
+        global last_loaded
+        last_loaded = f"{model_name} on {device}"
         self._chunk_samples = max(1, int(cfg.local_agreement.chunk_ms * sample_rate / 1000))
         self._session: _UtteranceSession | None = None
         if cfg.local_agreement.agreement_window != 2:
@@ -135,15 +197,29 @@ class FasterWhisperAsr(AsrProvider):
         return words, info.language
 
     def _decode_text(self, audio_int16: np.ndarray) -> tuple[str, str]:
-        """Plain segment-level decode, used for the authoritative final transcript."""
+        """Plain segment-level decode, used for the authoritative final transcript.
+
+        Returns "" when there was no real speech in it - see the filters above.
+        """
         audio = pcm16_to_float32(audio_int16)
         segments, info = self._model.transcribe(
             audio,
             language=self._resolved_language(audio),  # re-picked on the whole utterance
             beam_size=self._cfg.beam_size,
             word_timestamps=False,
+            # Whisper's own speech detector trims the noise our endpointer let
+            # through; with nothing left it returns no segments instead of
+            # inventing some. One utterance at a time, so nothing to condition on.
+            vad_filter=True,
+            condition_on_previous_text=False,
         )
-        text = "".join(seg.text for seg in segments).strip()
+        kept = [
+            seg for seg in segments
+            if not looks_like_non_speech(seg.no_speech_prob, seg.avg_logprob, seg.compression_ratio)
+        ]
+        text = "".join(seg.text for seg in kept).strip()
+        if is_known_hallucination(text):
+            text = ""
         return text, info.language
 
     def _resolved_language(self, audio: np.ndarray) -> str | None:

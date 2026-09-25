@@ -500,12 +500,39 @@ License 2.0) and published by `.github/workflows/one-click-stack.yml`, so a
 first start downloads it instead of building it. Using an Attendee you run
 elsewhere instead: `docker-compose.external-attendee.yml`.
 
-The translator is CPU-only (`deploy/config.docker.yaml`: Whisper `small`,
-int8). With an NVIDIA GPU, the quickest win is putting the translation model
-(the slowest step on CPU) on it:
-`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`
-(needs Docker GPU support - see the comments in `docker-compose.gpu.yml`; the
-file is validated with `docker compose config` but has not been run on a GPU).
+**NVIDIA GPU mode (automatic):** the start scripts check whether Docker can use
+an NVIDIA GPU (`docker run --gpus all ... nvidia-smi`) and if so add
+`docker-compose.gpu.yml`: the translator's GPU image
+(`interpreter-translator:gpu`, CUDA cuBLAS + cuDNN 9) running Whisper
+**large-v3-turbo** (`deploy/config.docker-gpu.yaml` - far better Arabic than
+`small`), and Ollama on the GPU. Without a usable GPU everything stays on the
+CPU (`deploy/config.docker.yaml`: Whisper `small`, int8). If the GPU can't
+run Whisper after all, the translator falls back to `small` on the CPU instead
+of going silent (`asr.cpu_fallback_model`). The dashboard says which one it's
+using. `INTERPRETER_CPU=1` forces the CPU. CI builds the GPU image and checks
+its CUDA libraries load, but no GPU is available there - GPU mode hasn't been
+run on a real GPU yet.
+
+**What keeps it from talking when nobody spoke** (Whisper "hears" stock
+phrases like "شكراً" / "Thank you" / "ترجمة نانسي قنقر" in silence and noise):
+- speech detection tuned for call audio (`vad` in `deploy/config.docker*.yaml`);
+- utterances quieter than -50 dBFS, or with under 45 ms of *voiced* sound
+  (vocal cords at a pitch - `engine/app/voicing.py`; breaths, clicks and
+  keyboard noise have none) never reach Whisper;
+- Whisper runs with its own speech filter and without conditioning, segments
+  it rates as likely non-speech are dropped, and its stock phrases are dropped
+  when they're the whole utterance (`providers/asr_faster_whisper.py`);
+- the bot's own voice can come back through someone's speaker into another
+  microphone (two phones in one room) and would loop: the bridge ignores the
+  call's audio while the bot speaks and for 1.5s after, and drops a transcript
+  matching something it just said (`attendee_bridge.py`). People talking over
+  the interpreter aren't heard - with consecutive interpretation they wait.
+The two-device simulation plays 20s of room noise, clicks and breaths before
+the first turn and fails if the bot says anything.
+
+**Mute**: *Mute interpreter* on the dashboard or in the app keeps the bot in the
+meeting but silent (it stops mid-sentence, and skips synthesizing); captions
+keep coming. *Unmute* brings its voice back (`POST /api/bots/{id}/mute`).
 
 **How it behaves in a call**: everyone hears the bot's translation after each
 sentence (consecutive interpretation, not simultaneous) - speaker finishes, a

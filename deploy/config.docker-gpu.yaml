@@ -1,3 +1,9 @@
+# GPU variant of config.docker.yaml, used by docker-compose.gpu.yml (the start
+# scripts switch to it when Docker can use an NVIDIA GPU). Differences: Whisper
+# large-v3-turbo on the GPU - far better Arabic than small, and faster there
+# than small is on a CPU - and a shorter translation timeout, since Ollama is
+# on the GPU too. Otherwise identical; the original notes below still apply:
+#
 # Translator config for docker-compose.yml. Same schema as the repo-root
 # config.yaml, adjusted for running in a container with no GPU:
 #   - ASR on CPU with a smaller Whisper model (large-v3-turbo on CPU can't keep
@@ -25,9 +31,10 @@ vad:
 
 asr:
   provider: faster_whisper
-  model: small # multilingual (not small.en) - it must hear both Arabic and English
-  device: cpu
-  compute_type: int8
+  model: large-v3-turbo
+  device: cuda
+  compute_type: int8_float16 # ~1GB of video memory, leaving room for the 8B translation model
+  cpu_fallback_model: small # if the GPU can't run it after all: the CPU setup's model
   language: auto
   candidate_languages: [en, ar] # auto-detect picks between these two only
   beam_size: 1
@@ -46,7 +53,7 @@ translator:
   ollama:
     base_url: http://ollama:11434
     model: llama3.1:8b-instruct-q4_K_M
-    timeout_s: 120 # CPU-only Ollama: the first request also loads the model
+    timeout_s: 60 # the first request also loads the model into video memory
   claude:
     model: claude-haiku-4-5-20251001
     timeout_s: 15

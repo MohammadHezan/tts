@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -18,7 +19,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
-data class BotInfo(val id: String, val state: String, val problem: String? = null)
+data class BotInfo(val id: String, val state: String, val problem: String? = null, val muted: Boolean = false)
 
 class MeetingBotException(message: String) : Exception(message)
 
@@ -41,6 +42,13 @@ class MeetingBotApi(private val client: OkHttpClient, serverUrl: String) {
     }
 
     suspend fun getBot(botId: String): BotInfo = request("GET", "/api/bots/$botId", null).toBotInfo()
+
+    /** Muted, the bot stays in the meeting but stops speaking; its captions keep coming. */
+    suspend fun setMuted(botId: String, muted: Boolean): Boolean {
+        val body = buildJsonObject { put("muted", muted) }
+        val result = request("POST", "/api/bots/$botId/mute", body.toString())
+        return (result["muted"] as? JsonPrimitive)?.booleanOrNull ?: muted
+    }
 
     suspend fun leaveBot(botId: String) {
         request("POST", "/api/bots/$botId/leave", "")
@@ -82,6 +90,7 @@ class MeetingBotApi(private val client: OkHttpClient, serverUrl: String) {
         state = this["state"]?.jsonPrimitive?.content ?: "unknown",
         // Why it couldn't join or had to leave, already phrased for people (server.py _bot_problem).
         problem = (this["problem"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
+        muted = (this["muted"] as? JsonPrimitive)?.booleanOrNull ?: false,
     )
 
     private companion object {

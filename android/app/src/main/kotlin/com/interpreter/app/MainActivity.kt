@@ -89,6 +89,7 @@ class MainActivity : ComponentActivity() {
                             onMeetingUrlChange = meetingBotViewModel::setMeetingUrl,
                             onSendBot = meetingBotViewModel::sendBot,
                             onRemoveBot = meetingBotViewModel::removeBot,
+                            onToggleMute = meetingBotViewModel::toggleMute,
                             onSwitchMode = { mode = AppMode.ENGINE },
                         )
                     }

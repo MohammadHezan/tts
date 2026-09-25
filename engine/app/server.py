@@ -36,7 +36,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.attendee_bridge import ATTENDEE_SAMPLE_RATE, BotEventHub, run_bridge
+from app.attendee_bridge import ATTENDEE_SAMPLE_RATE, BotControls, BotEventHub, run_bridge
 from app.attendee_client import AttendeeClient, AttendeeError, AttendeeSettings
 from app.config import load_config
 from app.logging_utils import configure_logging, get_logger, log_event
@@ -56,6 +56,7 @@ _tts = build_tts_provider(_cfg.tts)  # None when tts.provider: none - captions o
 # through the bot, so the URL handed to Attendee carries a secret.
 _BRIDGE_TOKEN = os.environ.get("ATTENDEE_BRIDGE_TOKEN") or secrets.token_urlsafe(24)
 _bot_hub = BotEventHub()
+_bot_controls = BotControls()
 
 app = FastAPI(title="Arabic<->English Speech Translation Engine")
 
@@ -63,6 +64,10 @@ app = FastAPI(title="Arabic<->English Speech Translation Engine")
 class CreateBotRequest(BaseModel):
     meeting_url: str
     bot_name: str = "AI Interpreter"
+
+
+class MuteRequest(BaseModel):
+    muted: bool
 
 
 def _attendee_client() -> AttendeeClient:
@@ -170,7 +175,20 @@ async def bots_config(request: Request) -> dict[str, Any]:
         "callback_is_secure": callback.startswith("wss://"),
         # Set by start.sh / "Start Interpreter.bat" to this computer's Wi-Fi address.
         "phone_url": os.environ.get("INTERPRETER_PHONE_URL") or None,
+        # What speech recognition runs on: configured, or - once a bot has
+        # connected - what actually loaded (the GPU may have fallen back to CPU).
+        "speech_on_gpu": _speech_on_gpu(),
     }
+
+
+def _speech_on_gpu() -> bool:
+    if _cfg.asr.provider != "faster_whisper":
+        return False
+    from app.providers import asr_faster_whisper
+
+    if asr_faster_whisper.last_loaded is not None:
+        return asr_faster_whisper.last_loaded.endswith(" on cuda")
+    return _cfg.asr.device == "cuda"
 
 
 @app.post("/api/bots")
@@ -216,7 +234,16 @@ def _bot_problem(bot: dict[str, Any]) -> str | None:
 async def get_bot(bot_id: str) -> dict[str, Any]:
     bot = await _call_attendee(lambda client: client.get_bot(bot_id))
     bot["problem"] = _bot_problem(bot)
+    bot["muted"] = _bot_controls.is_muted(bot_id)
     return bot
+
+
+@app.post("/api/bots/{bot_id}/mute")
+async def mute_bot(bot_id: str, body: MuteRequest) -> dict[str, Any]:
+    """Stops (or restarts) the bot's voice in the meeting; its captions keep going."""
+    _bot_controls.set_muted(bot_id, body.muted)
+    log_event(_logger, logging.INFO, "attendee_bot_muted" if body.muted else "attendee_bot_unmuted", bot_id=bot_id)
+    return {"id": bot_id, "muted": body.muted}
 
 
 @app.post("/api/bots/{bot_id}/leave")
@@ -262,10 +289,11 @@ async def attendee_bridge(ws: WebSocket) -> None:
     frame_bytes = _cfg.audio.frame_samples * 2
     await run_bridge(
         ws,
-        lambda: Pipeline(_cfg, asr, _translator, _tts, emit_partials=False),
+        lambda **hooks: Pipeline(_cfg, asr, _translator, _tts, emit_partials=False, **hooks),
         _cfg.audio.sample_rate_hz,
         frame_bytes,
         _bot_hub,
+        _bot_controls,
     )
     warm_up.cancel()
 

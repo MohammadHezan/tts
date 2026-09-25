@@ -56,6 +56,12 @@ class VadConfig(BaseModel):
     min_speech_ms: int = 150
     min_silence_ms: int = 700
     speech_pad_ms: int = 200
+    # Utterances quieter than this (RMS, dBFS) are dropped before ASR - a
+    # call's comfort noise or a distant sound, not someone talking. None = off.
+    min_utterance_dbfs: float | None = None
+    # Utterances with less voiced sound than this (vocal cords vibrating - see
+    # app/voicing.py) are dropped before ASR: breaths, clicks, a chair. None = off.
+    min_voiced_ms: int | None = None
 
 
 class AsrConfig(BaseModel):
@@ -63,6 +69,9 @@ class AsrConfig(BaseModel):
     model: str = "large-v3-turbo"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     compute_type: str = "auto"
+    # If the GPU can't run the model (driver or CUDA libraries missing), load
+    # this one on the CPU instead of failing. None = fail.
+    cpu_fallback_model: str | None = None
     language: str = "auto"
     # With language: auto, only these languages are considered (the most likely
     # of them wins). Empty = anything Whisper knows. Stops a short English turn

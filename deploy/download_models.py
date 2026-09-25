@@ -12,6 +12,7 @@ docker-compose.yml's ollama-pull service.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import urllib.request
@@ -26,7 +27,9 @@ FILES = {
     "ar_JO-kareem-medium.onnx": f"{PIPER}/ar_JO-kareem-medium.onnx",
     "ar_JO-kareem-medium.onnx.json": f"{PIPER}/ar_JO-kareem-medium.onnx.json",
 }
-WHISPER_MODEL = "small"  # deploy/config.docker.yaml's asr.model
+# asr.model of the config the image runs: config.docker.yaml (CPU) or
+# config.docker-gpu.yaml (GPU) - the Dockerfile passes it in.
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL") or "small"
 
 
 def download(url: str, dest: Path, attempts: int = 5) -> None:

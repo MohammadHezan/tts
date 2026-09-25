@@ -8,6 +8,7 @@ const meetingUrlInput = document.getElementById('meeting-url');
 const botNameInput = document.getElementById('bot-name');
 const sendBtn = document.getElementById('send-bot');
 const removeBtn = document.getElementById('remove-bot');
+const muteBtn = document.getElementById('mute-bot');
 const statusEl = document.getElementById('status');
 const hintEl = document.getElementById('bot-hint');
 const warningsEl = document.getElementById('warnings');
@@ -28,6 +29,7 @@ const STATE_HINTS = {
 };
 
 let botId = null;
+let botMuted = false;
 let hintedState = null;
 let eventsSocket = null;
 let pollTimer = null;
@@ -48,6 +50,12 @@ function recall() {
   } catch (_) {
     return null;
   }
+}
+
+function showMuted(muted) {
+  botMuted = muted;
+  // Muted: the bot stops speaking in the meeting; its captions keep coming here.
+  muteBtn.textContent = muted ? 'Unmute interpreter' : 'Mute interpreter';
 }
 
 function setStatus(text, kind) {
@@ -99,7 +107,9 @@ async function loadConfig() {
   meetingServiceReady = config.attendee_ready;
   readinessEl.classList.toggle('ready', config.attendee_ready);
   if (config.attendee_ready) {
-    readinessEl.textContent = 'Ready. Paste a meeting link and send the interpreter in.';
+    readinessEl.textContent = 'Ready. Paste a meeting link and send the interpreter in.' + (config.speech_on_gpu
+      ? ' Running on the graphics card.'
+      : ' Running on the processor: each sentence takes about 10-15 seconds.');
   } else {
     // Usually the bundled meeting service still starting - check again shortly.
     readinessEl.textContent = config.attendee_problem || 'The meeting service is not ready yet.';
@@ -180,7 +190,8 @@ async function pollState() {
   try {
     const bot = await api('GET', `/api/bots/${encodeURIComponent(botId)}`);
     const state = bot.state || 'unknown';
-    setStatus(`Bot: ${state}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
+    showMuted(Boolean(bot.muted));
+    setStatus(`Bot: ${state}${bot.muted ? ' (muted)' : ''}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
     if (state !== hintedState && STATE_HINTS[state]) {
       hintEl.textContent = [STATE_HINTS[state], bot.problem].filter(Boolean).join(' ');
       hintedState = state;
@@ -197,6 +208,7 @@ function track(id) {
   hintedState = null;
   remember(id);
   removeBtn.hidden = false;
+  muteBtn.hidden = false;
   sendBtn.disabled = true;
   openEvents(id);
   pollState();
@@ -210,6 +222,8 @@ function stopTracking() {
   botId = null;
   remember(null);
   removeBtn.hidden = true;
+  muteBtn.hidden = true;
+  showMuted(false);
   sendBtn.disabled = !meetingServiceReady;
 }
 
@@ -233,6 +247,19 @@ sendBtn.addEventListener('click', async () => {
     setStatus('Could not send bot', 'error');
     hintEl.textContent = err.message;
     sendBtn.disabled = false;
+  }
+});
+
+muteBtn.addEventListener('click', async () => {
+  if (!botId) return;
+  try {
+    const result = await api('POST', `/api/bots/${encodeURIComponent(botId)}/mute`, { muted: !botMuted });
+    showMuted(result.muted);
+    hintEl.textContent = result.muted
+      ? 'Muted: the interpreter stays in the meeting but stops speaking. Translations still appear here.'
+      : 'Unmuted: the interpreter speaks its translations in the meeting again.';
+  } catch (err) {
+    hintEl.textContent = err.message;
   }
 });
 

@@ -82,7 +82,7 @@ async def test_bridge_turns_meeting_speech_into_bot_output_audio(
 
     await run_bridge(
         socket,  # type: ignore[arg-type]
-        lambda: Pipeline(cfg, FakeAsr(final_text=SPOKEN), FakeTranslator(), FakeTts()),
+        lambda **hooks: Pipeline(cfg, FakeAsr(final_text=SPOKEN), FakeTranslator(), FakeTts(), **hooks),
         cfg.audio.sample_rate_hz,
         cfg.audio.frame_samples * 2,
         hub,
@@ -126,7 +126,7 @@ async def test_bridge_ignores_non_audio_triggers() -> None:
     socket = FakeAttendeeSocket([json.dumps({"bot_id": BOT_ID, "trigger": "some.other_event", "data": {}})])
     await run_bridge(
         socket,  # type: ignore[arg-type]
-        lambda: Pipeline(cfg, FakeAsr(), FakeTranslator(), FakeTts()),
+        lambda **hooks: Pipeline(cfg, FakeAsr(), FakeTranslator(), FakeTts(), **hooks),
         cfg.audio.sample_rate_hz,
         cfg.audio.frame_samples * 2,
         BotEventHub(),

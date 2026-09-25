@@ -1,18 +1,35 @@
-# Optional: run the translation model on an NVIDIA GPU (e.g. an RTX 3060).
-# Translation is by far the slowest step on CPU - on a GPU the 8B model
-# answers in about a second instead of many.
+# NVIDIA GPU mode, added on top of docker-compose.yml. The start scripts turn
+# it on by themselves when Docker can use an NVIDIA GPU (they test with
+# `docker run --gpus all ... nvidia-smi`), so there's normally nothing to do.
+# By hand:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 #
-# Needs a current NVIDIA driver plus GPU support in Docker: on Windows,
-# Docker Desktop with the WSL 2 backend; on Linux, the NVIDIA Container
-# Toolkit. Check with: docker run --rm --gpus all ubuntu nvidia-smi
+# Whisper large-v3-turbo on the GPU hears Arabic far better than the CPU
+# default (small), and the translation model answers in about a second instead
+# of several. Needs a current NVIDIA driver plus GPU support in Docker: on
+# Windows, Docker Desktop with the WSL 2 backend; on Linux, the NVIDIA Container
+# Toolkit. Set INTERPRETER_CPU=1 before starting to stay on the CPU anyway.
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
 services:
+  translator:
+    <<: *gpu
+    image: ghcr.io/mohammadhezan/interpreter-translator:gpu
+    build:
+      context: .
+      args:
+        VARIANT: gpu
+        WHISPER_MODEL: large-v3-turbo
+    environment:
+      ENGINE_CONFIG_PATH: /srv/tts/deploy/config.docker-gpu.yaml
+
   ollama:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    <<: *gpu

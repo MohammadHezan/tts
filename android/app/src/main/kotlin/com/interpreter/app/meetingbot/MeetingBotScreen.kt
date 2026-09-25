@@ -53,6 +53,7 @@ fun MeetingBotScreen(
     onMeetingUrlChange: (String) -> Unit,
     onSendBot: () -> Unit,
     onRemoveBot: () -> Unit,
+    onToggleMute: () -> Unit,
     onSwitchMode: () -> Unit,
 ) {
     val botActive = uiState.botId != null
@@ -97,6 +98,22 @@ fun MeetingBotScreen(
                     fontSize = 16.sp,
                     color = MaterialTheme.colorScheme.primary,
                 )
+                Spacer(Modifier.height(8.dp))
+                if (uiState.botMuted) {
+                    Text(
+                        "Muted - the interpreter stays in the meeting silently. Translations still appear below.",
+                        fontSize = 14.sp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                Button(
+                    onClick = onToggleMute,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                ) {
+                    Text(if (uiState.botMuted) "Unmute interpreter" else "Mute interpreter", fontSize = 16.sp)
+                }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onRemoveBot, modifier = Modifier.fillMaxWidth()) {
                     Text("Remove interpreter from meeting")

@@ -93,7 +93,25 @@ if ($dockerMem -lt 10GB) {
     }
 }
 
-# 3. Let phones on the Wi-Fi reach this PC (asks for administrator permission once).
+# 3. An NVIDIA graphics card makes it several times faster and hear Arabic far
+#    better (docker-compose.gpu.yml). Used only if Docker can actually reach it.
+$useGpu = $false
+if (-not $Env:INTERPRETER_CPU -and (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+    Say 'Checking the NVIDIA graphics card (the first time this also downloads part of the interpreter)...'
+    $ErrorActionPreference = 'Continue'
+    & docker run --rm --gpus all --entrypoint nvidia-smi ollama/ollama *> $null
+    $useGpu = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = 'Stop'
+}
+if ($useGpu) {
+    $Env:COMPOSE_FILE = 'docker-compose.yml;docker-compose.gpu.yml'
+    Say 'Using the NVIDIA graphics card - fast mode.'
+} else {
+    Remove-Item Env:COMPOSE_FILE -ErrorAction SilentlyContinue
+    Say 'No usable NVIDIA graphics card - running on the processor (about 10-15 seconds per sentence).'
+}
+
+# 4. Let phones on the Wi-Fi reach this PC (asks for administrator permission once).
 $adapter = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1
 $ip = $null
 if ($adapter) { $ip = @($adapter.IPv4Address)[0].IPAddress }
@@ -117,7 +135,7 @@ if ($adapter) {
 }
 if ($ip) { $Env:INTERPRETER_PHONE_URL = "http://${ip}:$Port" }
 
-# 4. Download (first time ~15 GB) and start
+# 5. Download (first time ~15 GB) and start
 Say 'Getting the interpreter ready. The first time this downloads about 15 GB.'
 & docker compose pull --ignore-pull-failures
 & docker compose up -d

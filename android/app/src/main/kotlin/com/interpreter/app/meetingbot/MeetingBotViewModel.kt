@@ -26,6 +26,7 @@ data class MeetingBotUiState(
     val botId: String? = null,
     val botState: String? = null,
     val botProblem: String? = null,
+    val botMuted: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
     val conversation: ConversationState = ConversationState(),
@@ -103,7 +104,9 @@ class MeetingBotViewModel(application: Application) : AndroidViewModel(applicati
             try {
                 val api = MeetingBotApi(http, state.serverUrl)
                 val bot = api.createBot(state.meetingUrl.trim(), BOT_NAME)
-                _uiState.update { it.copy(botId = bot.id, botState = bot.state, conversation = ConversationState()) }
+                _uiState.update {
+                    it.copy(botId = bot.id, botState = bot.state, botMuted = false, conversation = ConversationState())
+                }
                 track(api, bot.id)
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -111,6 +114,23 @@ class MeetingBotViewModel(application: Application) : AndroidViewModel(applicati
                 _uiState.update { it.copy(error = error.message ?: "Could not reach the interpreter's computer.") }
             } finally {
                 _uiState.update { it.copy(busy = false) }
+            }
+        }
+    }
+
+    /** Silences (or restores) the bot's voice in the meeting; captions keep coming either way. */
+    fun toggleMute() {
+        val state = _uiState.value
+        val botId = state.botId ?: return
+        val api = MeetingBotApi(http, state.serverUrl)
+        viewModelScope.launch {
+            try {
+                val muted = api.setMuted(botId, !state.botMuted)
+                _uiState.update { it.copy(botMuted = muted, error = null) }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                _uiState.update { it.copy(error = error.message) }
             }
         }
     }
@@ -139,7 +159,7 @@ class MeetingBotViewModel(application: Application) : AndroidViewModel(applicati
             while (isActive) {
                 try {
                     val bot = api.getBot(botId)
-                    _uiState.update { it.copy(botState = bot.state, botProblem = bot.problem) }
+                    _uiState.update { it.copy(botState = bot.state, botProblem = bot.problem, botMuted = bot.muted) }
                     if (bot.state in FINISHED_STATES) {
                         events?.close(1000, null)
                         _uiState.update { it.copy(botId = null) }

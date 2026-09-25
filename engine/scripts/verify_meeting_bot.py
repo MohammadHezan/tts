@@ -201,6 +201,17 @@ def run_dashboard_check(chromium_path: str, fake: FakeAttendee) -> None:
         heard = page.inner_text(".turn .source")
         said = page.inner_text(".turn .translation")
         warnings_hidden = page.eval_on_selector("#warnings", "el => el.hidden")
+        # Mute and unmute, as someone in the meeting would - once the bot has
+        # finished its sentence, since muting cuts off whatever it's saying.
+        spoken_deadline = time.time() + 20
+        while fake.bot_output_bytes < 16000 * 2 and time.time() < spoken_deadline:
+            time.sleep(0.2)
+        page.click("#mute-bot")
+        page.wait_for_function("document.querySelector('#mute-bot').textContent === 'Unmute interpreter'", timeout=5_000)
+        muted_state = httpx.get(f"http://127.0.0.1:{ENGINE_PORT}/api/bots/{BOT_ID}", timeout=5).json()["muted"]
+        page.click("#mute-bot")
+        page.wait_for_function("document.querySelector('#mute-bot').textContent === 'Mute interpreter'", timeout=5_000)
+        unmuted_state = httpx.get(f"http://127.0.0.1:{ENGINE_PORT}/api/bots/{BOT_ID}", timeout=5).json()["muted"]
         browser.close()
 
     deadline = time.time() + 30
@@ -216,6 +227,7 @@ def run_dashboard_check(chromium_path: str, fake: FakeAttendee) -> None:
     assert not js_errors, f"JS page errors: {js_errors}"
     assert not console_errors, f"Console errors: {console_errors}"
     assert warnings_hidden, "dashboard showed configuration warnings in a fully configured setup"
+    assert muted_state is True and unmuted_state is False, "the dashboard's mute button didn't reach the server"
     assert heard == FAKE_TRANSCRIPT, "dashboard did not render what the bot heard"
     assert said, "dashboard did not render what the bot said"
     assert fake.bot_output_chunks > 0, "no realtime_audio.bot_output ever reached Attendee"

@@ -37,7 +37,7 @@ if ! docker info >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
     # Docker installed with get.docker.com needs sudo until you add yourself to
     # the "docker" group (sudo usermod -aG docker $USER, then log in again).
-    DOCKER=(sudo --preserve-env=INTERPRETER_PHONE_URL docker)
+    DOCKER=(sudo --preserve-env=INTERPRETER_PHONE_URL,COMPOSE_FILE docker)
   else
     say "Docker is installed but not running."
     say "  Linux:  sudo systemctl start docker"
@@ -52,6 +52,23 @@ if [ "$MEM_BYTES" -gt 0 ] && [ "$MEM_BYTES" -lt $((10 * 1024 * 1024 * 1024)) ]; 
   say "Warning: Docker can use only $((MEM_BYTES / 1024 / 1024 / 1024)) GB of memory. The interpreter needs"
   say "about 10 GB (translation model, speech recognition, the bot's browser)."
   say "It may be slow or stop. On a Mac: Docker Desktop -> Settings -> Resources -> Memory."
+fi
+
+# An NVIDIA graphics card makes it several times faster and hear Arabic far
+# better (docker-compose.gpu.yml). Used only if Docker can actually reach it.
+USE_GPU=0
+if [ -z "${INTERPRETER_CPU:-}" ] && command -v nvidia-smi >/dev/null 2>&1; then
+  say "Checking the NVIDIA graphics card (the first time this also downloads part of the interpreter)..."
+  if "${DOCKER[@]}" run --rm --gpus all --entrypoint nvidia-smi ollama/ollama >/dev/null 2>&1; then
+    USE_GPU=1
+  fi
+fi
+if [ "$USE_GPU" = 1 ]; then
+  export COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+  say "Using the NVIDIA graphics card - fast mode."
+else
+  unset COMPOSE_FILE
+  say "No usable NVIDIA graphics card - running on the processor (about 10-15 seconds per sentence)."
 fi
 
 say "Getting the interpreter ready. The first time this downloads about 15 GB."
