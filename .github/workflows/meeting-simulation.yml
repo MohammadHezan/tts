@@ -12,6 +12,9 @@ on:
       whisper_model:
         description: "Whisper model for the translator (small = the shipped default; medium hears Arabic better but is slower on CPU)"
         default: small
+      translation_model:
+        description: "Ollama model for the translator (the shipped default is llama3.1:8b-instruct-q4_K_M) - to compare translation quality; speed on this CPU runner says nothing about a GPU"
+        default: llama3.1:8b-instruct-q4_K_M
   push:
     branches: [claude/arabic-english-speech-translation-72v8pb]
     paths:
@@ -23,7 +26,7 @@ on:
       - ".github/workflows/meeting-simulation.yml"
 
 concurrency:
-  group: meeting-simulation-${{ github.ref }}-${{ inputs.whisper_model || 'small' }}
+  group: meeting-simulation-${{ github.ref }}-${{ inputs.whisper_model || 'small' }}-${{ inputs.translation_model || 'default' }}
   cancel-in-progress: true
 
 jobs:
@@ -59,12 +62,14 @@ jobs:
           EOF
           cat .env
 
-      - name: Use the requested Whisper model
+      - name: Use the requested Whisper and translation models
         env:
           WHISPER_MODEL: ${{ inputs.whisper_model || 'small' }}
+          TRANSLATION_MODEL: ${{ inputs.translation_model || 'llama3.1:8b-instruct-q4_K_M' }}
         run: |
           sed -i -E "s/^(  model: )small( .*)?$/\1${WHISPER_MODEL}\2/" deploy/config.docker.yaml
-          grep -n -A1 "^asr:" -m1 deploy/config.docker.yaml; grep -n "^  model:" deploy/config.docker.yaml
+          sed -i -E "s/llama3\.1:8b-instruct-q4_K_M/${TRANSLATION_MODEL}/" deploy/config.docker.yaml docker-compose.yml
+          grep -n "^  model:\|^    model:" deploy/config.docker.yaml; grep -n '"pull"' docker-compose.yml
 
       - name: docker compose up -d --build translator (with the stand-in Attendee from .env)
         run: docker compose -f docker-compose.yml -f docker-compose.external-attendee.yml up -d --build translator
@@ -93,11 +98,12 @@ jobs:
         working-directory: engine
         env:
           WHISPER_MODEL: ${{ inputs.whisper_model || 'small' }}
+          TRANSLATION_MODEL: ${{ inputs.translation_model || 'llama3.1:8b-instruct-q4_K_M' }}
         run: |
           python -u -m scripts.simulate_meeting \
             --engine-url http://localhost:8765 --api-key sim-key \
             --voices-dir ../sim-voices --dashboard --out ../sim-output \
-            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper ${WHISPER_MODEL} (CPU, int8), Ollama llama3.1 8B q4 (CPU), voices: Microsoft neural (Andrew EN, Taim AR), Kokoro/Piper if unreachable" \
+            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper ${WHISPER_MODEL} (CPU, int8), Ollama ${TRANSLATION_MODEL} (CPU), voices: Microsoft neural (Andrew EN, Taim AR), Kokoro/Piper if unreachable" \
             --info "Machine=GitHub ubuntu-latest runner: 4 vCPU, 16GB RAM, no GPU"
 
       - name: Collect the translator's logs
