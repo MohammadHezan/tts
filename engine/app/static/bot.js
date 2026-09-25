@@ -93,6 +93,21 @@ async function api(method, path, body) {
 
 let meetingServiceReady = false;
 
+function describeHardware(config) {
+  const hw = config.hardware || {};
+  const speech = hw.speech_model ? ` (speech: ${hw.speech_model})` : '';
+  if (config.speech_on_gpu) {
+    const translation = hw.translation_on_gpu === false ? ' Translation is on the processor, though.' : '';
+    return `Running on the graphics card${speech}.${translation}`;
+  }
+  // Why not - the start script's check, or Whisper failing on the card.
+  let why = '';
+  if (hw.speech_gpu_error) why = ` Whisper couldn't run on the graphics card: ${hw.speech_gpu_error}`;
+  else if (hw.gpu_check && !hw.gpu_check.startsWith('used')) why = ` Graphics card: ${hw.gpu_check}.`;
+  else if (!hw.gpu_check) why = ' The graphics-card check didn\'t run - start it with "Start Interpreter".';
+  return `Running on the processor${speech}: each sentence takes about 10-15 seconds.${why}`;
+}
+
 async function loadConfig() {
   let config;
   try {
@@ -107,9 +122,9 @@ async function loadConfig() {
   meetingServiceReady = config.attendee_ready;
   readinessEl.classList.toggle('ready', config.attendee_ready);
   if (config.attendee_ready) {
-    readinessEl.textContent = 'Ready. Paste a meeting link and send the interpreter in.' + (config.speech_on_gpu
-      ? ' Running on the graphics card.'
-      : ' Running on the processor: each sentence takes about 10-15 seconds.');
+    readinessEl.textContent = 'Ready. Paste a meeting link and send the interpreter in. ' + describeHardware(config);
+    // Whisper still loading (it tells for sure whether the graphics card works) - look again shortly.
+    if (config.hardware && config.hardware.speech_model === null) setTimeout(loadConfig, 5000);
   } else {
     // Usually the bundled meeting service still starting - check again shortly.
     readinessEl.textContent = config.attendee_problem || 'The meeting service is not ready yet.';
@@ -256,8 +271,8 @@ muteBtn.addEventListener('click', async () => {
     const result = await api('POST', `/api/bots/${encodeURIComponent(botId)}/mute`, { muted: !botMuted });
     showMuted(result.muted);
     hintEl.textContent = result.muted
-      ? 'Muted: the interpreter stays in the meeting but stops speaking. Translations still appear here.'
-      : 'Unmuted: the interpreter speaks its translations in the meeting again.';
+      ? 'Muted: the interpreter stays in the meeting but stops speaking. Translations still appear here. Anyone in the call can type "unmute" in the meeting chat to bring it back.'
+      : 'Unmuted: the interpreter speaks its translations in the meeting again. Anyone in the call can type "mute" in the meeting chat to silence it.';
   } catch (err) {
     hintEl.textContent = err.message;
   }

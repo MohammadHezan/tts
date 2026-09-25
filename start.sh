@@ -37,7 +37,7 @@ if ! docker info >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
     # Docker installed with get.docker.com needs sudo until you add yourself to
     # the "docker" group (sudo usermod -aG docker $USER, then log in again).
-    DOCKER=(sudo --preserve-env=INTERPRETER_PHONE_URL,COMPOSE_FILE docker)
+    DOCKER=(sudo --preserve-env=INTERPRETER_PHONE_URL,COMPOSE_FILE,INTERPRETER_GPU_STATUS docker)
   else
     say "Docker is installed but not running."
     say "  Linux:  sudo systemctl start docker"
@@ -57,18 +57,27 @@ fi
 # An NVIDIA graphics card makes it several times faster and hear Arabic far
 # better (docker-compose.gpu.yml). Used only if Docker can actually reach it.
 USE_GPU=0
-if [ -z "${INTERPRETER_CPU:-}" ] && command -v nvidia-smi >/dev/null 2>&1; then
+if [ -n "${INTERPRETER_CPU:-}" ]; then
+  GPU_STATUS="turned off with INTERPRETER_CPU"
+elif ! command -v nvidia-smi >/dev/null 2>&1; then
+  GPU_STATUS="no NVIDIA driver found on this computer (nvidia-smi is missing)"
+else
   say "Checking the NVIDIA graphics card (the first time this also downloads part of the interpreter)..."
-  if "${DOCKER[@]}" run --rm --gpus all --entrypoint nvidia-smi ollama/ollama >/dev/null 2>&1; then
+  if GPU_OUTPUT="$("${DOCKER[@]}" run --rm --gpus all --entrypoint nvidia-smi ollama/ollama 2>&1)"; then
     USE_GPU=1
+    GPU_STATUS="used: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+  else
+    GPU_STATUS="Docker could not use it: $(printf '%s\n' "$GPU_OUTPUT" | grep -v '^[[:space:]]*$' | tail -1)"
   fi
 fi
+# Shown on the interpreter's page, so a screenshot of it says what happened.
+export INTERPRETER_GPU_STATUS="$GPU_STATUS"
 if [ "$USE_GPU" = 1 ]; then
   export COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
-  say "Using the NVIDIA graphics card - fast mode."
+  say "Using the NVIDIA graphics card - fast mode ($GPU_STATUS)."
 else
   unset COMPOSE_FILE
-  say "No usable NVIDIA graphics card - running on the processor (about 10-15 seconds per sentence)."
+  say "Running on the processor, about 10-15 seconds per sentence. Graphics card: $GPU_STATUS"
 fi
 
 say "Getting the interpreter ready. The first time this downloads about 15 GB."

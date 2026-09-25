@@ -81,14 +81,27 @@ class AttendeeClient:
     async def get_bot(self, bot_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/v1/bots/{bot_id}")
 
+    async def chat_messages(self, bot_id: str, updated_after: str, cursor: str | None = None) -> dict[str, Any]:
+        """The meeting chat since `updated_after` (ISO 8601): {"results": [...], "next": url | None}."""
+        params = {"updated_after": updated_after}
+        if cursor:
+            params["cursor"] = cursor
+        return await self._request("GET", f"/api/v1/bots/{bot_id}/chat_messages", params=params)
+
+    async def send_chat_message(self, bot_id: str, message: str) -> dict[str, Any]:
+        """Posts `message` in the meeting chat as the bot (Attendee: no emoji)."""
+        return await self._request("POST", f"/api/v1/bots/{bot_id}/send_chat_message", {"message": message})
+
     async def leave_bot(self, bot_id: str) -> dict[str, Any]:
         return await self._request("POST", f"/api/v1/bots/{bot_id}/leave")
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        response = await self._client.request(method, path, json=body)
+    async def _request(
+        self, method: str, path: str, body: dict[str, Any] | None = None, params: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        response = await self._client.request(method, path, json=body, params=params)
         if response.is_error:
             raise AttendeeError(response.status_code, response.text)
         return response.json() if response.content else {}

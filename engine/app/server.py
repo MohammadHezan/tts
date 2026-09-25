@@ -28,6 +28,7 @@ import contextlib
 import logging
 import os
 import secrets
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from app.attendee_bridge import ATTENDEE_SAMPLE_RATE, BotControls, BotEventHub, 
 from app.attendee_client import AttendeeClient, AttendeeError, AttendeeSettings
 from app.config import load_config
 from app.logging_utils import configure_logging, get_logger, log_event
+from app.meeting_chat import MUTED, UNMUTED, announce, watch_chat
 from app.pipeline import Pipeline
 from app.providers.base import build_asr_provider, build_translator_provider, build_tts_provider
 
@@ -49,6 +51,34 @@ _cfg = load_config()
 _logger = configure_logging(_cfg.logging)
 _asr = None  # for /ws only - built on first use, so a meeting-bot-only server never loads a model it doesn't need
 _asr_lock = asyncio.Lock()
+# One ASR instance loaded ahead of time for the next meeting bot (INTERPRETER_PRELOAD_ASR,
+# set by docker-compose.yml): the bot's first sentence doesn't wait for Whisper to
+# load, and the dashboard can tell right away whether it runs on the GPU.
+_spare_asr: Any = None
+_spare_asr_lock = threading.Lock()
+
+
+def _preload_spare_asr() -> None:
+    global _spare_asr
+    try:
+        asr = build_asr_provider(_cfg.asr)
+    except Exception as error:  # the bot will try again when it connects, and log why
+        log_event(_logger, logging.ERROR, "asr_preload_failed", error=repr(error))
+        return
+    with _spare_asr_lock:
+        _spare_asr = asr
+    log_event(_logger, logging.INFO, "asr_preloaded")
+
+
+def _take_spare_asr() -> Any:
+    global _spare_asr
+    with _spare_asr_lock:
+        asr, _spare_asr = _spare_asr, None
+    return asr
+
+
+if os.environ.get("INTERPRETER_PRELOAD_ASR") == "1":
+    threading.Thread(target=_preload_spare_asr, name="asr-preload", daemon=True).start()
 _translator = build_translator_provider(_cfg.translator)
 _tts = build_tts_provider(_cfg.tts)  # None when tts.provider: none - captions only
 
@@ -175,10 +205,38 @@ async def bots_config(request: Request) -> dict[str, Any]:
         "callback_is_secure": callback.startswith("wss://"),
         # Set by start.sh / "Start Interpreter.bat" to this computer's Wi-Fi address.
         "phone_url": os.environ.get("INTERPRETER_PHONE_URL") or None,
-        # What speech recognition runs on: configured, or - once a bot has
-        # connected - what actually loaded (the GPU may have fallen back to CPU).
+        # What speech recognition runs on: configured, or - once it has loaded -
+        # what actually loaded (the GPU may have fallen back to the CPU).
         "speech_on_gpu": _speech_on_gpu(),
+        "hardware": await _hardware_report(),
     }
+
+
+async def _hardware_report() -> dict[str, Any]:
+    """Where each model runs and, when it's not the graphics card, why - for the
+    dashboard, so a screenshot of it is enough to see what happened."""
+    report: dict[str, Any] = {
+        "gpu_check": os.environ.get("INTERPRETER_GPU_STATUS") or None,  # the start scripts' check
+        "speech_model": None,
+        "speech_gpu_error": None,
+        "translation_model": _cfg.translator.ollama.model if _cfg.translator.provider == "ollama" else _cfg.translator.provider,
+        "translation_on_gpu": None,
+    }
+    if _cfg.asr.provider == "faster_whisper":
+        from app.providers import asr_faster_whisper
+
+        report["speech_model"] = asr_faster_whisper.last_loaded
+        report["speech_gpu_error"] = asr_faster_whisper.last_gpu_error
+    if _cfg.translator.provider == "ollama":
+        try:
+            async with httpx.AsyncClient(base_url=_cfg.translator.ollama.base_url, timeout=2.0) as client:
+                loaded = (await client.get("/api/ps")).json().get("models") or []
+            model = next((m for m in loaded if m.get("name") == _cfg.translator.ollama.model or m.get("model") == _cfg.translator.ollama.model), None)
+            if model is not None:  # only known once it has translated something
+                report["translation_on_gpu"] = (model.get("size_vram") or 0) > 0
+        except (httpx.HTTPError, ValueError):
+            pass
+    return report
 
 
 def _speech_on_gpu() -> bool:
@@ -191,12 +249,26 @@ def _speech_on_gpu() -> bool:
     return _cfg.asr.device == "cuda"
 
 
+# Keeps fire-and-forget tasks referenced until they finish (asyncio holds only weak references).
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _in_background(coro: Any) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 @app.post("/api/bots")
 async def create_bot(body: CreateBotRequest, request: Request) -> dict[str, Any]:
     ws_url = _bridge_ws_url(request)
-    return await _call_attendee(
+    bot = await _call_attendee(
         lambda client: client.create_bot(body.meeting_url, body.bot_name, ws_url, ATTENDEE_SAMPLE_RATE)
     )
+    if bot.get("id"):
+        # "mute" / "unmute" typed in the meeting's chat (app/meeting_chat.py)
+        _in_background(watch_chat(bot["id"], _bot_controls))
+    return bot
 
 
 # Attendee's reason codes (bots/models.py BotEventSubTypes upstream) for why a
@@ -241,8 +313,11 @@ async def get_bot(bot_id: str) -> dict[str, Any]:
 @app.post("/api/bots/{bot_id}/mute")
 async def mute_bot(bot_id: str, body: MuteRequest) -> dict[str, Any]:
     """Stops (or restarts) the bot's voice in the meeting; its captions keep going."""
+    changed = _bot_controls.is_muted(bot_id) != body.muted
     _bot_controls.set_muted(bot_id, body.muted)
     log_event(_logger, logging.INFO, "attendee_bot_muted" if body.muted else "attendee_bot_unmuted", bot_id=bot_id)
+    if changed:  # so everyone in the call knows why it went quiet, and how to undo it
+        _in_background(announce(bot_id, MUTED if body.muted else UNMUTED))
     return {"id": bot_id, "muted": body.muted}
 
 
@@ -285,7 +360,7 @@ async def attendee_bridge(ws: WebSocket) -> None:
     warm_up = asyncio.create_task(_warm_up_translator())
     # AsrProvider holds per-utterance state, so each bot gets its own instance;
     # constructing one loads the ASR model, which must not block the event loop.
-    asr = await asyncio.to_thread(build_asr_provider, _cfg.asr)
+    asr = _take_spare_asr() or await asyncio.to_thread(build_asr_provider, _cfg.asr)
     frame_bytes = _cfg.audio.frame_samples * 2
     await run_bridge(
         ws,

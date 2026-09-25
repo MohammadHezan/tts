@@ -56,6 +56,8 @@ services:
       TLS_CERT_FILE: /setup/translator.pem
       TLS_KEY_FILE: /setup/translator.key
       INTERPRETER_PHONE_URL: ${INTERPRETER_PHONE_URL:-} # set by the start scripts
+      INTERPRETER_GPU_STATUS: ${INTERPRETER_GPU_STATUS:-} # the start scripts' graphics-card check, for the page
+      INTERPRETER_PRELOAD_ASR: "1" # load Whisper at start: the first bot joins faster, and the page knows CPU vs GPU
     extra_hosts:
       - "host.docker.internal:host-gateway" # for docker-compose.external-attendee.yml on Linux
     volumes:

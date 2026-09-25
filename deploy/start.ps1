@@ -96,19 +96,32 @@ if ($dockerMem -lt 10GB) {
 # 3. An NVIDIA graphics card makes it several times faster and hear Arabic far
 #    better (docker-compose.gpu.yml). Used only if Docker can actually reach it.
 $useGpu = $false
-if (-not $Env:INTERPRETER_CPU -and (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+if ($Env:INTERPRETER_CPU) {
+    $gpuStatus = 'turned off with INTERPRETER_CPU'
+} elseif (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+    $gpuStatus = 'no NVIDIA driver found on this PC (nvidia-smi is missing)'
+} else {
     Say 'Checking the NVIDIA graphics card (the first time this also downloads part of the interpreter)...'
     $ErrorActionPreference = 'Continue'
-    & docker run --rm --gpus all --entrypoint nvidia-smi ollama/ollama *> $null
+    $gpuOutput = @(& docker run --rm --gpus all --entrypoint nvidia-smi ollama/ollama 2>&1 | ForEach-Object { "$_" })
     $useGpu = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = 'Stop'
+    if ($useGpu) {
+        $gpuName = (& nvidia-smi --query-gpu=name --format=csv,noheader 2>$null | Select-Object -First 1)
+        $gpuStatus = "used: $gpuName"
+    } else {
+        $lastLine = ($gpuOutput | Where-Object { $_ -match '\S' } | Select-Object -Last 1)
+        $gpuStatus = "Docker could not use it: $lastLine"
+    }
 }
+# Shown on the interpreter's page, so a photo of it says what happened.
+$Env:INTERPRETER_GPU_STATUS = $gpuStatus
 if ($useGpu) {
     $Env:COMPOSE_FILE = 'docker-compose.yml;docker-compose.gpu.yml'
-    Say 'Using the NVIDIA graphics card - fast mode.'
+    Say "Using the NVIDIA graphics card - fast mode ($gpuStatus)."
 } else {
     Remove-Item Env:COMPOSE_FILE -ErrorAction SilentlyContinue
-    Say 'No usable NVIDIA graphics card - running on the processor (about 10-15 seconds per sentence).'
+    Say "Running on the processor, about 10-15 seconds per sentence. Graphics card: $gpuStatus"
 }
 
 # 4. Let phones on the Wi-Fi reach this PC (asks for administrator permission once).

@@ -62,6 +62,7 @@ class FakeAttendee:
     def __init__(self, meeting_audio: np.ndarray, ca_file: Path) -> None:
         self.meeting_audio = meeting_audio
         self.ca_file = ca_file
+        self.chat_sent: list[str] = []
         self.create_body: dict[str, Any] | None = None
         self.state = "none"
         self.bot_output_chunks = 0
@@ -80,6 +81,17 @@ class FakeAttendee:
             self.state = "joining"
             asyncio.create_task(self._join_and_stream(self.create_body["websocket_settings"]["audio"]["url"]))
             return {"id": BOT_ID, "state": self.state, "meeting_url": self.create_body["meeting_url"]}
+
+        # The meeting chat (engine app/meeting_chat.py): nobody types anything here,
+        # but the bot says hello and announces mute changes.
+        @app.get("/api/v1/bots/{bot_id}/chat_messages")
+        async def chat_messages(bot_id: str) -> dict[str, Any]:
+            return {"next": None, "previous": None, "results": []}
+
+        @app.post("/api/v1/bots/{bot_id}/send_chat_message")
+        async def send_chat_message(bot_id: str, request: Request) -> dict[str, Any]:
+            self.chat_sent.append((await request.json())["message"])
+            return {}
 
         # The dashboard's readiness check (engine app/server.py _attendee_status).
         @app.get("/api/v1/bots")
@@ -228,6 +240,9 @@ def run_dashboard_check(chromium_path: str, fake: FakeAttendee) -> None:
     assert not console_errors, f"Console errors: {console_errors}"
     assert warnings_hidden, "dashboard showed configuration warnings in a fully configured setup"
     assert muted_state is True and unmuted_state is False, "the dashboard's mute button didn't reach the server"
+    print(f"Meeting chat, as the bot: {fake.chat_sent}")
+    assert any("muted" in m.lower() and "unmuted" not in m.lower() for m in fake.chat_sent), "muting wasn't announced in the chat"
+    assert any("unmuted" in m.lower() for m in fake.chat_sent), "unmuting wasn't announced in the chat"
     assert heard == FAKE_TRANSCRIPT, "dashboard did not render what the bot heard"
     assert said, "dashboard did not render what the bot said"
     assert fake.bot_output_chunks > 0, "no realtime_audio.bot_output ever reached Attendee"

@@ -192,6 +192,7 @@ class Meeting:
     """Attendee's REST API, plus what Attendee + the call do once the bot is in."""
 
     def __init__(self, api_key: str) -> None:
+        self.chat_sent: list[str] = []
         self.api_key = api_key
         self.t0 = time.monotonic()
         self.heard: dict[str, list[tuple[int, np.ndarray]]] = {"A": [], "B": []}  # (sample pos, audio)
@@ -220,6 +221,17 @@ class Meeting:
             self.state = "joining"
             self._tasks.append(asyncio.create_task(self._join(self.create_body["websocket_settings"]["audio"]["url"])))
             return {"id": BOT_ID, "state": self.state, "meeting_url": self.create_body["meeting_url"]}
+
+        # The meeting chat (engine app/meeting_chat.py): nobody types anything here,
+        # but the bot says hello and announces mute changes.
+        @app.get("/api/v1/bots/{bot_id}/chat_messages")
+        async def chat_messages(bot_id: str) -> dict[str, Any]:
+            return {"next": None, "previous": None, "results": []}
+
+        @app.post("/api/v1/bots/{bot_id}/send_chat_message")
+        async def send_chat_message(bot_id: str, request: Request) -> dict[str, Any]:
+            self.chat_sent.append((await request.json())["message"])
+            return {}
 
         # The dashboard's readiness check (engine app/server.py _attendee_status).
         @app.get("/api/v1/bots")

@@ -30,8 +30,10 @@ from app.providers.base import AsrHypothesis, AsrProvider
 from app.text_normalize import normalize_text
 
 
-# "<model> on <device>" of the most recently loaded model, for the dashboard.
+# "<model> on <device>" of the most recently loaded model, and why the GPU
+# couldn't be used if it fell back - for the dashboard.
 last_loaded: str | None = None
+last_gpu_error: str | None = None
 
 
 def _resolve_device_and_compute_type(cfg: AsrConfig) -> tuple[str, str]:
@@ -129,6 +131,8 @@ class FasterWhisperAsr(AsrProvider):
                 raise
             import logging
 
+            global last_gpu_error
+            last_gpu_error = f"{type(error).__name__}: {error}"[:300]
             logging.getLogger("tts_engine").warning(
                 "ASR could not run %s on the GPU (%r); using %s on the CPU instead",
                 cfg.model, error, cfg.cpu_fallback_model,
