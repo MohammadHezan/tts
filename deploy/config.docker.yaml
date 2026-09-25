@@ -30,6 +30,7 @@ asr:
   compute_type: int8
   language: auto
   candidate_languages: [en, ar] # auto-detect picks between these two only
+  glossary_path: glossary.yaml # its terms become Whisper hint words ("walnut", not "wall at")
   beam_size: 1
   local_agreement:
     enabled: true

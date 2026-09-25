@@ -37,6 +37,7 @@ asr:
   cpu_fallback_model: small # if the GPU can't run it after all: the CPU setup's model
   language: auto
   candidate_languages: [en, ar] # auto-detect picks between these two only
+  glossary_path: glossary.yaml # its terms become Whisper hint words ("walnut", not "wall at")
   beam_size: 1
   local_agreement:
     enabled: true

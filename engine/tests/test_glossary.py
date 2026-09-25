@@ -37,3 +37,13 @@ def test_repo_glossary_loads() -> None:
 
     g = Glossary.load(REPO_ROOT / "glossary.yaml")
     assert '"walnut" = "خشب الجوز"' in g.format_for_prompt()
+
+
+def test_glossary_terms_become_whisper_hint_words_per_language(tmp_path) -> None:
+    from app.glossary import Glossary
+    from app.providers.asr_faster_whisper import hotwords_by_language
+
+    path = tmp_path / "glossary.yaml"
+    path.write_text('terms:\n  - en: "walnut"\n    ar: "خشب الجوز"\n  - en: "sofa"\n    ar: "أريكة"\n', encoding="utf-8")
+    assert hotwords_by_language(Glossary.load(path)) == {"en": "walnut, sofa", "ar": "خشب الجوز، أريكة"}
+    assert hotwords_by_language(Glossary.load(None)) == {}

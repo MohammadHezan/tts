@@ -72,6 +72,10 @@ class AsrConfig(BaseModel):
     # If the GPU can't run the model (driver or CUDA libraries missing), load
     # this one on the CPU instead of failing. None = fail.
     cpu_fallback_model: str | None = None
+    # The glossary's terms, in the language being heard, are given to Whisper
+    # as hint words ("walnut" is otherwise easily heard as "wall at"). Same
+    # file as translator.glossary_path. None = no hints.
+    glossary_path: str | None = None
     language: str = "auto"
     # With language: auto, only these languages are considered (the most likely
     # of them wins). Empty = anything Whisper knows. Stops a short English turn

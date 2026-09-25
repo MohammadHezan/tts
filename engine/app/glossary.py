@@ -44,6 +44,9 @@ class Glossary:
     def __len__(self) -> int:
         return len(self._terms)
 
+    def terms(self) -> list[GlossaryTerm]:
+        return list(self._terms)
+
     def format_for_prompt(self) -> str:
         """Renders the glossary as a system-prompt block covering both directions
         (the same text whichever way a turn is translated - see app/prompts.py),

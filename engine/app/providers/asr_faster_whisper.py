@@ -24,7 +24,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from app.audio_utils import pcm16_to_float32
-from app.config import AsrConfig
+from app.config import REPO_ROOT, AsrConfig
+from app.glossary import Glossary
 from app.providers.base import AsrHypothesis, AsrProvider
 from app.text_normalize import normalize_text
 
@@ -65,6 +66,14 @@ KNOWN_HALLUCINATIONS = frozenset(
 )
 def is_known_hallucination(text: str) -> bool:
     return normalize_text(text) in KNOWN_HALLUCINATIONS
+
+
+def hotwords_by_language(glossary: Glossary) -> dict[str, str]:
+    """The glossary's terms as Whisper hint words, one comma-separated list per language."""
+    terms = glossary.terms()
+    if not terms:
+        return {}
+    return {"en": ", ".join(t.en for t in terms), "ar": "، ".join(t.ar for t in terms)}
 
 
 def looks_like_non_speech(no_speech_prob: float, avg_logprob: float, compression_ratio: float) -> bool:
@@ -128,6 +137,7 @@ class FasterWhisperAsr(AsrProvider):
             self._model = WhisperModel(model_name, device=device, compute_type="int8")
         global last_loaded
         last_loaded = f"{model_name} on {device}"
+        self._hotwords = hotwords_by_language(Glossary.load(REPO_ROOT / cfg.glossary_path if cfg.glossary_path else None))
         self._chunk_samples = max(1, int(cfg.local_agreement.chunk_ms * sample_rate / 1000))
         self._session: _UtteranceSession | None = None
         if cfg.local_agreement.agreement_window != 2:
@@ -202,11 +212,13 @@ class FasterWhisperAsr(AsrProvider):
         Returns "" when there was no real speech in it - see the filters above.
         """
         audio = pcm16_to_float32(audio_int16)
+        language = self._resolved_language(audio)  # re-picked on the whole utterance
         segments, info = self._model.transcribe(
             audio,
-            language=self._resolved_language(audio),  # re-picked on the whole utterance
+            language=language,
             beam_size=self._cfg.beam_size,
             word_timestamps=False,
+            hotwords=self._hotwords.get(language or ""),
             # Whisper's own speech detector trims the noise our endpointer let
             # through; with nothing left it returns no segments instead of
             # inventing some. One utterance at a time, so nothing to condition on.
