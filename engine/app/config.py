@@ -118,19 +118,32 @@ class KokoroTtsConfig(BaseModel):
     voices_path: str = "models/voices-v1.0.bin"
     voice: str = "af_heart"
     lang: str = "en-us"  # Kokoro has no built-in Australian English voice; en-us/en-gb are closest
+    speed: float = 1.0  # 1.0 is ~190 words/min with af_heart - brisk; 0.85 is conversational
 
 
 class PiperTtsConfig(BaseModel):
     # piper-tts is GPL-3.0-or-later (not Apache/MIT) - see README "Licensing".
     model_path: str = "models/ar_JO-kareem-medium.onnx"
     config_path: str | None = None  # defaults to "<model_path>.json" if null
+    length_scale: float | None = None  # >1 speaks slower; None = the voice's own default
+
+
+class NeuralTtsConfig(BaseModel):
+    """Microsoft's neural voices - the ones Edge's Read Aloud uses - through
+    edge-tts: no account or key, needs internet. The local voices (kokoro,
+    piper above) take over for any sentence they can't deliver."""
+
+    voices: dict[str, str] = Field(default_factory=lambda: {"en": "en-US-AndrewNeural", "ar": "ar-JO-TaimNeural"})
+    rate: str = "+0%"  # the voices' own pace is conversational; "-10%" is slower
+    timeout_s: float = 6.0
 
 
 class TtsConfig(BaseModel):
-    provider: Literal["none", "multi_voice", "fake"] = "none"
+    provider: Literal["none", "multi_voice", "neural", "fake"] = "none"
     sample_rate_hz: int = 24000
     kokoro: KokoroTtsConfig = Field(default_factory=KokoroTtsConfig)
     piper: PiperTtsConfig = Field(default_factory=PiperTtsConfig)
+    neural: NeuralTtsConfig = Field(default_factory=NeuralTtsConfig)
 
 
 class LoggingConfig(BaseModel):

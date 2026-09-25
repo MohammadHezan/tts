@@ -107,6 +107,7 @@ tts/
 │   │       ├── tts_kokoro.py            # English voice (Apache-2.0)
 │   │       ├── tts_piper.py             # Arabic voice (GPL-3.0 - see Licensing)
 │   │       ├── tts_multi.py             # routes by language: Kokoro EN / Piper AR
+│   │       ├── tts_neural.py            # Microsoft neural voices (online), local voices as fallback
 │   │       └── tts_fake.py              # deterministic fake for tests/dry-run
 │   ├── static/                  # web client - served by server.py at http://host:port/
 │   │   ├── index.html / style.css
@@ -231,6 +232,19 @@ Apache/MIT-only dependency tree, swap the Arabic provider in `tts_piper.py`/
 `tts_multi.py` - that's the entire plug point - once a suitable model exists,
 or fall back to `espeak-ng` (already a dev dependency here, also GPL, but
 usable as a last-resort robotic-voice fallback).
+
+### The meeting bot's voices
+
+The Docker configs (`deploy/config.docker*.yaml`) use `tts.provider: neural`:
+Microsoft's neural voices - `ar-JO-TaimNeural` and `en-US-AndrewNeural`, the
+ones Edge's Read Aloud uses - through [edge-tts](https://github.com/rany2/edge-tts)
+(**LGPL-3.0**). They sound natural and speak at a conversational pace, which
+the local Piper Arabic voice doesn't. No account or key, but they need internet
+and it is Edge's own read-aloud service used outside Edge, not a supported
+Microsoft API (the supported, keyed route to the same voices is Azure Speech).
+Any sentence they can't deliver within `tts.neural.timeout_s` is spoken by
+the local Kokoro/Piper voices, so the bot never goes silent; set
+`tts.provider: multi_voice` to stay fully offline.
 
 ## Run it
 

@@ -97,7 +97,7 @@ jobs:
           python -u -m scripts.simulate_meeting \
             --engine-url http://localhost:8765 --api-key sim-key \
             --voices-dir ../sim-voices --dashboard --out ../sim-output \
-            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper ${WHISPER_MODEL} (CPU, int8), Ollama llama3.1 8B q4 (CPU), Kokoro EN + Piper AR voices" \
+            --info "Stack=docker compose, deploy/config.docker.yaml: Whisper ${WHISPER_MODEL} (CPU, int8), Ollama llama3.1 8B q4 (CPU), voices: Microsoft neural (Andrew EN, Taim AR), Kokoro/Piper if unreachable" \
             --info "Machine=GitHub ubuntu-latest runner: 4 vCPU, 16GB RAM, no GPU"
 
       - name: Collect the translator's logs
@@ -105,7 +105,7 @@ jobs:
         run: |
           mkdir -p sim-output
           docker compose logs --no-color > sim-output/docker-compose.log 2>&1 || true
-          grep -E "pipeline_stage_failed|turn_complete|attendee_bot|Traceback|Error" sim-output/docker-compose.log | tail -60 || true
+          grep -E "pipeline_stage_failed|turn_complete|attendee_bot|neural_voice_failed|Traceback|Error" sim-output/docker-compose.log | tail -60 || true
 
       - name: Put the report on the run page
         if: always()

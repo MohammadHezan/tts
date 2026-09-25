@@ -61,16 +61,27 @@ translator:
     max_tokens: 512
 
 tts:
-  provider: multi_voice
+  # Microsoft's neural voices (online, no key) - natural Arabic and English at
+  # a conversational pace. The local voices below speak any sentence they
+  # can't deliver (no internet, service down).
+  provider: neural
   sample_rate_hz: 24000
+  neural:
+    voices:
+      en: en-US-AndrewNeural
+      ar: ar-JO-TaimNeural
+    rate: "+0%"   # "-10%" = slower, "+10%" = faster
+    timeout_s: 6.0
   kokoro:
     model_path: /models/kokoro-v1.0.onnx
     voices_path: /models/voices-v1.0.bin
     voice: af_heart
     lang: en-us
+    speed: 0.85   # 1.0 is ~190 words/min - too fast to follow
   piper:
     model_path: /models/ar_JO-kareem-medium.onnx
     config_path: null
+    length_scale: 1.05
 
 logging:
   level: INFO

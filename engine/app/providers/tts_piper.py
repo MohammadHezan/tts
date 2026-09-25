@@ -34,7 +34,9 @@ class PiperTts(TtsProvider):
         return await asyncio.to_thread(self._synthesize_sync, text)
 
     def _synthesize_sync(self, text: str) -> TtsAudio:
-        chunks = list(self._voice.synthesize(text))
+        from piper import SynthesisConfig
+
+        chunks = list(self._voice.synthesize(text, syn_config=SynthesisConfig(length_scale=self._cfg.piper.length_scale)))
         if not chunks:
             return TtsAudio(pcm16=b"", sample_rate=22050)
         pcm16 = b"".join(chunk.audio_int16_bytes for chunk in chunks)

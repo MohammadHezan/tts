@@ -30,6 +30,7 @@ class KokoroTts(TtsProvider):
             self._kokoro.create,
             text,
             voice=self._cfg.kokoro.voice,
+            speed=self._cfg.kokoro.speed,
             lang=self._cfg.kokoro.lang,
         )
         pcm16 = (np.clip(audio_f32, -1.0, 1.0) * 32767).astype(np.int16).tobytes()

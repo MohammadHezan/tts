@@ -524,6 +524,22 @@ def _mark(value: bool | None) -> str:
     return "n/a" if value is None else ("PASS" if value else "FAIL")
 
 
+def speaking_pace_wpm(text: str, audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> float | None:
+    """Words per minute of the bot's voice: words it said / time from its first
+    to its last audible 30ms frame (so the silence around the voice doesn't count).
+    Conversational pace is ~130-160 wpm in English; Arabic packs more into a
+    word, so the same pace is ~90-120 Arabic words/min."""
+    frame = int(sample_rate * 0.03)
+    if not text.strip() or len(audio) < frame:
+        return None
+    frames = audio[: len(audio) // frame * frame].astype(np.float64).reshape(-1, frame)
+    loud = np.flatnonzero(np.sqrt((frames**2).mean(axis=1)) > 32768 * 10 ** (-40 / 20))
+    if len(loud) == 0:
+        return None
+    seconds = (loud[-1] - loud[0] + 1) * 0.03
+    return round(len(text.split()) / seconds * 60, 1)
+
+
 def write_report(
     out: Path, turns: list[Turn], meeting: Meeting, feed: CaptionFeed, info: dict[str, str], other_checks_ok: bool = True
 ) -> bool:
@@ -541,6 +557,10 @@ def write_report(
             f"- **Delay** (speaker stops -> listener hears the translation): "
             f"median {statistics.median(voice_delays):.1f}s, worst {max(voice_delays):.1f}s"
         )
+    for lang, name in (("en", "English"), ("ar", "Arabic")):
+        paces = [p for t in turns if t.said_lang == lang and (p := speaking_pace_wpm(t.said, t.bot_audio)) is not None]
+        if paces:
+            lines.append(f"- **Bot's {name} voice pace**: median {statistics.median(paces):.0f} words/min")
     if meeting.error:
         lines.append(f"- **Meeting connection error**: `{meeting.error}`")
     if feed.error:
@@ -585,6 +605,7 @@ def write_report(
                 "bot_heard": t.heard, "bot_heard_lang": t.heard_lang, "wer": t.wer,
                 "bot_said": t.said, "bot_said_lang": t.said_lang, "errors": t.errors, "timed_out": t.timed_out,
                 "bot_voice_seconds": round(len(t.bot_audio) / SAMPLE_RATE, 2),
+                "bot_voice_wpm": speaking_pace_wpm(t.said, t.bot_audio),
                 "voice_after_s": t.voice_after_s, "text_after_s": t.text_after_s,
                 "listener_heard": t.listener_heard, "listener_english": t.listener_english,
                 "keys": list(t.line.keys), "keys_found": t.keys_found,
@@ -671,6 +692,20 @@ async def simulate(args: argparse.Namespace, engine_url: str, api_key: str) -> b
             print(f"  ERROR: {error}", flush=True)
         turns.append(turn)
 
+    bot_voices = "unknown"
+    try:  # which voices actually spoke (tts.provider neural falls back to the local ones)
+        status = (await client.get("/api/bots/config")).json().get("hardware", {}).get("voices")
+        if isinstance(status, dict):
+            used = status.get("spoken", {})
+            bot_voices = f"Microsoft neural voice spoke {used.get('neural', 0)} sentences, local voice {used.get('local', 0)}"
+            if status.get("last_error"):
+                bot_voices += f" (last neural failure: {status['last_error']})"
+        elif status:
+            bot_voices = str(status)
+    except (httpx.HTTPError, ValueError) as error:
+        bot_voices = f"couldn't tell: {error!r}"
+    print(f"Bot's voices: {bot_voices}", flush=True)
+
     if dashboard is not None:
         _, browser, page = dashboard
         try:
@@ -707,6 +742,7 @@ async def simulate(args: argparse.Namespace, engine_url: str, api_key: str) -> b
     info = {
         "Translator": engine_url,
         "Speaker voices": f"Sarah = {voices['en'].name}, Omar = {voices['ar'].name}",
+        "Bot's voices": bot_voices,
         "Listener check": f"faster-whisper {ears.model_name}" if ears else "not run",
     }
     info["Noise only, nobody speaking"] = f"{'PASS' if silence_ok else 'FAIL'} - {silence_detail} ({args.noise_s:.0f}s of room noise, clicks, breaths)"

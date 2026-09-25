@@ -120,6 +120,11 @@ def build_tts_provider(cfg: TtsConfig) -> TtsProvider | None:
         from app.providers.tts_multi import MultiVoiceTts
 
         return MultiVoiceTts(cfg)
+    if cfg.provider == "neural":
+        from app.providers.tts_multi import MultiVoiceTts
+        from app.providers.tts_neural import NeuralVoiceTts
+
+        return NeuralVoiceTts(cfg, fallback_factory=lambda: MultiVoiceTts(cfg))
     if cfg.provider == "fake":
         from app.providers.tts_fake import FakeTts
 

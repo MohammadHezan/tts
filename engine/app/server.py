@@ -221,7 +221,12 @@ async def _hardware_report() -> dict[str, Any]:
         "speech_gpu_error": None,
         "translation_model": _cfg.translator.ollama.model if _cfg.translator.provider == "ollama" else _cfg.translator.provider,
         "translation_on_gpu": None,
+        "voices": _cfg.tts.provider,
     }
+    if _cfg.tts.provider == "neural":
+        from app.providers import tts_neural
+
+        report["voices"] = {"provider": "neural", "spoken": dict(tts_neural.spoken), "last_error": tts_neural.last_error}
     if _cfg.asr.provider == "faster_whisper":
         from app.providers import asr_faster_whisper
 
