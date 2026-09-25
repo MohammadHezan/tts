@@ -450,7 +450,10 @@ async def run_turn(meeting: Meeting, feed: CaptionFeed, line: Line, pcm: np.ndar
         answered = bool(heard) and heard[-1] in replied
         heard_nothing = any(e["type"] == "final" and not e["text"] for _, e in events)
         last_activity = max([t for t, _ in events] + [t for t, _ in chunks] + [utterance.end_time])
-        quiet = time.monotonic() - last_activity > idle_s and not meeting.bot_still_talking()
+        # Quiet for longer than transcribing a phrase takes (a FINAL's latency):
+        # the rest of a long line may still be being transcribed on a slow CPU.
+        transcribing_s = max([e.get("latency_ms", 0) / 1000 for _, e in events if e["type"] == "final"], default=0.0)
+        quiet = time.monotonic() - last_activity > idle_s + transcribing_s and not meeting.bot_still_talking()
         if (answered or heard_nothing) and quiet:
             break
         if time.monotonic() > deadline:
