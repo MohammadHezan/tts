@@ -154,7 +154,8 @@ Say 'Getting the interpreter ready. The first time this downloads about 15 GB.'
 & docker compose up -d
 if ($LASTEXITCODE -ne 0) { Say 'Starting failed - see the messages above.'; exit 1 }
 
-Say 'Starting up (the first start also downloads the 4.9 GB translation model)...'
+$modelGb = if ($useGpu) { '8.1' } else { '4.9' }  # Gemma 3 12B on the graphics card (docker-compose.gpu.yml)
+Say "Starting up (the first start also downloads the $modelGb GB translation model)..."
 $started = Get-Date
 while ($true) {
     try {

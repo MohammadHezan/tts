@@ -519,7 +519,10 @@ an NVIDIA GPU (`docker run --gpus all ... nvidia-smi`) and if so add
 `docker-compose.gpu.yml`: the translator's GPU image
 (`interpreter-translator:gpu`, CUDA cuBLAS + cuDNN 9) running Whisper
 **large-v3-turbo** (`deploy/config.docker-gpu.yaml` - far better Arabic than
-`small`), and Ollama on the GPU. Without a usable GPU everything stays on the
+`small`), and Ollama on the GPU with **Gemma 3 12B** instead of Llama 3.1 8B
+(clearly better Arabic in the meeting simulation, 8.1 GB; flash attention and
+an 8-bit context cache keep it and Whisper inside a 12 GB card - the
+dashboard says if part of it spills onto the processor). Without a usable GPU everything stays on the
 CPU (`deploy/config.docker.yaml`: Whisper `small`, int8). If the GPU can't
 run Whisper after all, the translator falls back to `small` on the CPU instead
 of going silent (`asr.cpu_fallback_model`). The dashboard says which one it's

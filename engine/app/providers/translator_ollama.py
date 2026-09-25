@@ -31,6 +31,11 @@ class OllamaTranslator(TranslatorProvider):
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(build_messages(text, source_lang, target_lang, context))
 
+        # Deterministic: a live interpreter should say the same thing for the
+        # same sentence, not a creative variation of it.
+        options: dict[str, int | float] = {"temperature": 0, "num_predict": max_output_tokens(text)}
+        if self._cfg.ollama.num_ctx is not None:
+            options["num_ctx"] = self._cfg.ollama.num_ctx
         response = await self._client.post(
             "/api/chat",
             json={
@@ -38,9 +43,7 @@ class OllamaTranslator(TranslatorProvider):
                 "messages": messages,
                 "stream": False,
                 "keep_alive": self._cfg.ollama.keep_alive,
-                # Deterministic: a live interpreter should say the same thing
-                # for the same sentence, not a creative variation of it.
-                "options": {"temperature": 0, "num_predict": max_output_tokens(text)},
+                "options": options,
             },
         )
         response.raise_for_status()

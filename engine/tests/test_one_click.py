@@ -158,3 +158,19 @@ def test_zoom_without_credentials_is_explained_not_linked() -> None:
     message = _explain_attendee_rejection(detail)
     assert message and "Google Meet" in message and "localhost" not in message
     assert _explain_attendee_rejection('{"meeting_url":["invalid"]}') is None
+
+
+@pytest.mark.parametrize(
+    ("compose_files", "config_name"),
+    [(["docker-compose.yml"], "config.docker.yaml"), (["docker-compose.yml", "docker-compose.gpu.yml"], "config.docker-gpu.yaml")],
+)
+def test_each_setup_downloads_the_translation_model_it_uses(compose_files: list[str], config_name: str) -> None:
+    import yaml
+
+    services: dict = {}
+    for name in compose_files:  # later files override earlier ones, as `docker compose -f a -f b` does
+        for service, settings in yaml.safe_load((REPO_ROOT / name).read_text(encoding="utf-8"))["services"].items():
+            services.setdefault(service, {}).update(settings)
+    pulled = services["ollama-pull"]["entrypoint"][-1]
+    config = yaml.safe_load((REPO_ROOT / "deploy" / config_name).read_text(encoding="utf-8"))
+    assert config["translator"]["ollama"]["model"] == pulled

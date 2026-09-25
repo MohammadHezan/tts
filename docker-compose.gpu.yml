@@ -6,8 +6,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 #
 # Whisper large-v3-turbo on the GPU hears Arabic far better than the CPU
-# default (small), and the translation model answers in about a second instead
-# of several. Needs a current NVIDIA driver plus GPU support in Docker: on
+# default (small), and the translation model - Gemma 3 12B here, better Arabic
+# than the CPU's Llama 3.1 8B, ~8GB more to download once - answers in about a
+# second instead of several. Needs a current NVIDIA driver plus GPU support in Docker: on
 # Windows, Docker Desktop with the WSL 2 backend; on Linux, the NVIDIA Container
 # Toolkit. Set INTERPRETER_CPU=1 before starting to stay on the CPU anyway.
 x-gpu: &gpu
@@ -33,3 +34,11 @@ services:
 
   ollama:
     <<: *gpu
+    environment:
+      # Halve the memory for the model's context (flash attention, 8-bit
+      # cache), so Gemma 3 12B and Whisper both fit a 12GB card.
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: q8_0
+
+  ollama-pull:
+    entrypoint: ["ollama", "pull", "gemma3:12b"]

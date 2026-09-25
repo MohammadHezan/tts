@@ -84,7 +84,9 @@ say "Getting the interpreter ready. The first time this downloads about 15 GB."
 "${DOCKER[@]}" compose pull --ignore-pull-failures || true
 "${DOCKER[@]}" compose up -d
 
-say "Starting up (the first start also downloads the 4.9 GB translation model)..."
+MODEL_GB=4.9
+[ "$USE_GPU" = 1 ] && MODEL_GB=8.1  # Gemma 3 12B on the graphics card (docker-compose.gpu.yml)
+say "Starting up (the first start also downloads the $MODEL_GB GB translation model)..."
 started=$(date +%s)
 until curl -fsS -m 5 http://localhost:8765/healthz >/dev/null 2>&1; do
   # A one-shot setup step that failed, or the translator crashing in a loop.

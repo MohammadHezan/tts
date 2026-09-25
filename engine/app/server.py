@@ -221,6 +221,7 @@ async def _hardware_report() -> dict[str, Any]:
         "speech_gpu_error": None,
         "translation_model": _cfg.translator.ollama.model if _cfg.translator.provider == "ollama" else _cfg.translator.provider,
         "translation_on_gpu": None,
+        "translation_gpu_share": None,
         "voices": _cfg.tts.provider,
     }
     if _cfg.tts.provider == "neural":
@@ -238,7 +239,11 @@ async def _hardware_report() -> dict[str, Any]:
                 loaded = (await client.get("/api/ps")).json().get("models") or []
             model = next((m for m in loaded if m.get("name") == _cfg.translator.ollama.model or m.get("model") == _cfg.translator.ollama.model), None)
             if model is not None:  # only known once it has translated something
-                report["translation_on_gpu"] = (model.get("size_vram") or 0) > 0
+                on_gpu, size = model.get("size_vram") or 0, model.get("size") or 0
+                report["translation_on_gpu"] = on_gpu > 0
+                # Below 1: part of the model didn't fit in video memory and runs
+                # on the processor - slower.
+                report["translation_gpu_share"] = round(on_gpu / size, 2) if size else None
         except (httpx.HTTPError, ValueError):
             pass
     return report

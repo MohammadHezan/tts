@@ -60,7 +60,11 @@ translator:
   glossary_path: glossary.yaml
   ollama:
     base_url: http://ollama:11434
-    model: llama3.1:8b-instruct-q4_K_M
+    # Gemma 3 12B: clearly better Arabic than Llama 3.1 8B in the meeting
+    # simulation ("كرسي طعام", not "كرسيًا طعامًا"). ~8GB; with Whisper it fits a
+    # 12GB card (see docker-compose.gpu.yml). Too slow for the CPU config.
+    model: gemma3:12b
+    num_ctx: 4096
     timeout_s: 60 # the first request also loads the model into video memory
   claude:
     model: claude-haiku-4-5-20251001

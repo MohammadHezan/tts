@@ -102,6 +102,10 @@ class OllamaConfig(BaseModel):
     # (5m) unloads it during a quiet stretch of a meeting, and reloading an 8B
     # model on CPU adds tens of seconds to the next sentence.
     keep_alive: str = "30m"
+    # Context window in tokens (None = Ollama's default). Set, so the memory
+    # Ollama reserves for it is known: the system prompt, the context turns and
+    # a merged batch of phrases come to under ~2500.
+    num_ctx: int | None = None
 
 
 class ClaudeConfig(BaseModel):

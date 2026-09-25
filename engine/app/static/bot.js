@@ -97,7 +97,11 @@ function describeHardware(config) {
   const hw = config.hardware || {};
   const speech = hw.speech_model ? ` (speech: ${hw.speech_model})` : '';
   if (config.speech_on_gpu) {
-    const translation = hw.translation_on_gpu === false ? ' Translation is on the processor, though.' : '';
+    let translation = '';
+    if (hw.translation_on_gpu === false) translation = ' Translation is on the processor, though.';
+    else if (hw.translation_gpu_share != null && hw.translation_gpu_share < 0.95) {
+      translation = ` Only ${Math.round(hw.translation_gpu_share * 100)}% of the translation model fits in video memory; the rest runs on the processor (slower). Close other programs using the graphics card, then Stop and Start.`;
+    }
     return `Running on the graphics card${speech}.${translation}`;
   }
   // Why not - the start script's check, or Whisper failing on the card.
