@@ -6,6 +6,8 @@
 param([switch]$NoBrowser)
 
 $ErrorActionPreference = 'Stop'
+# The folder with docker-compose.yml: this script's parent (deploy\..). In the
+# Windows download that is the "app" folder next to "Start Interpreter".
 Set-Location (Split-Path -Parent $PSScriptRoot)
 $Port = 8765
 $FirewallRule = 'Meeting Interpreter (phones)'
@@ -38,13 +40,25 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Start-Process 'https://www.docker.com/products/docker-desktop/'
     exit 1
 }
+function SayDockerHelp {
+    Say ''
+    Say "Docker's engine did not start. Try these, in order:"
+    Say '  1. Open Docker Desktop. If it shows an agreement, click Accept (signing in is optional - skip it).'
+    Say '     Wait until the bottom-left corner says "Engine running".'
+    Say '  2. Restart the PC (needed once after installing Docker Desktop), then double-click "Start Interpreter" again.'
+    Say '  3. Still stuck on "Engine starting"? Open PowerShell as administrator, run:  wsl --update'
+    Say '     then restart the PC.'
+    Say '  4. Task Manager -> Performance -> CPU: "Virtualization" must say Enabled. If it says Disabled,'
+    Say '     turn it on in the PC''s BIOS/UEFI settings (called "SVM" on AMD, "VT-x" or "Intel Virtualization" on Intel).'
+}
 if (-not (DockerRunning)) {
     if (Test-Path (DockerDesktopExe)) {
         Say 'Starting Docker Desktop...'
         Start-Process (DockerDesktopExe)
     }
+    Say "Waiting for Docker's engine (up to 5 minutes)..."
     if (-not (WaitForDocker 300)) {
-        Say 'Docker Desktop did not start. Open it, wait until it says "Engine running", then try again.'
+        SayDockerHelp
         exit 1
     }
 }
@@ -66,7 +80,7 @@ if ($dockerMem -lt 10GB) {
             & wsl --shutdown
             Start-Process (DockerDesktopExe)
             if (-not (WaitForDocker 300)) {
-                Say 'Docker Desktop did not come back. Open it, then double-click "Start Interpreter" again.'
+                SayDockerHelp
                 exit 1
             }
         }

@@ -11,10 +11,10 @@ NEEDS
   - About 20 GB of free disk space
 
 START
-  Windows:  double-click  "Start Interpreter"
-            (the first time it may ask two questions - answer Y to both)
   Linux:    ./start.sh
   Mac:      ./start.sh
+  Windows:  use Interpreter-Windows.zip instead (same release page), or
+            double-click "Start Interpreter" here - not start.sh
 
   The first start downloads about 15 GB and can take 20-40 minutes.
   After that it starts in about a minute. When it's ready, your browser
@@ -31,8 +31,8 @@ USE IT
      graphics card).
 
 STOP
-  Windows:  double-click  "Stop Interpreter"
   Linux/Mac: ./stop.sh
+  Windows:   double-click  "Stop Interpreter"
 
 TIPS
   - Google Meet and Microsoft Teams work as they are. Zoom needs extra

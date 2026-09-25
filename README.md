@@ -16,9 +16,11 @@ Native iOS and foldable UX are **not** in this delivery - see
 
 ## Quick start: the Meeting Interpreter
 
-1. **Computer** (Windows/Linux/Mac, 16 GB memory, Docker installed): download
-   [Interpreter-PC.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-PC.zip),
-   unzip, double-click `Start Interpreter` (Windows) or run `./start.sh`.
+1. **Computer** (16 GB memory, Docker installed):
+   - Windows: [Interpreter-Windows.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-Windows.zip) -
+     unzip, open the `Interpreter` folder, double-click `Start Interpreter`.
+   - Linux/Mac: [Interpreter-PC.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-PC.zip) -
+     unzip, run `./start.sh`.
 2. **Phone**: install [Interpreter-debug.apk](https://github.com/MohammadHezan/tts/releases/download/android-latest/Interpreter-debug.apk),
    open *Meeting Bot*, paste a Google Meet link, send.
 
@@ -451,9 +453,15 @@ no `.env`, no IP address, no model downloads by hand.
 
 1. Install **Docker Desktop** (Windows/Mac) or Docker (Linux:
    `curl -fsSL https://get.docker.com | sh`).
-2. Download **[Interpreter-PC.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-PC.zip)**
-   and unzip it (or use this repo - it's the same files).
-3. **Windows:** double-click `Start Interpreter`. **Linux/Mac:** `./start.sh`.
+2. Download and unzip **[Interpreter-Windows.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-Windows.zip)**
+   (Windows: just the starters, everything else in `app\`) or
+   **[Interpreter-PC.zip](https://github.com/MohammadHezan/tts/releases/download/pc-latest/Interpreter-PC.zip)**
+   (Linux/Mac) - or use this repo, same files.
+3. **Windows:** double-click `Start Interpreter` (not `start.sh` - that's for
+   Linux/Mac). **Linux/Mac:** `./start.sh`. Windows first-time Docker Desktop
+   notes (accept its agreement, restart, `wsl --update`) are in
+   `deploy/README-Windows.txt`, and the start script prints them if Docker's
+   engine won't start.
    The first start downloads about 15 GB (20-40 minutes); after that it starts
    in about a minute. It opens `http://localhost:8765/bot.html` when ready.
 4. Start a **Google Meet** and copy its link. On the phone: Interpreter app →

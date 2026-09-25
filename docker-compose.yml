@@ -15,6 +15,10 @@
 # Using an Attendee you run elsewhere instead: see
 # docker-compose.external-attendee.yml.
 
+# Fixed, so volumes (and the ~15GB of downloads in them) don't depend on what
+# the folder happens to be called.
+name: interpreter
+
 x-attendee: &attendee
   # Attendee (Elastic License 2.0, github.com/attendee-labs/attendee), built
   # unmodified from the tagged release: CI publishes the build to this image

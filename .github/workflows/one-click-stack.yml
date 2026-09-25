@@ -206,7 +206,7 @@ jobs:
       contents: write # the pc-latest pre-release
     steps:
       - uses: actions/checkout@v4
-      - name: Build Interpreter-PC.zip
+      - name: Build Interpreter-PC.zip (Linux/Mac) and Interpreter-Windows.zip
         run: |
           # The stack, the start/stop scripts, and the translator's source (so
           # docker compose can still build it if the image can't be pulled).
@@ -214,13 +214,22 @@ jobs:
           mkdir -p Interpreter-PC && cp deploy/README-PC.txt Interpreter-PC/README.txt
           zip -q Interpreter-PC.zip Interpreter-PC/README.txt
           unzip -l Interpreter-PC.zip | tail -1
+
+          # Windows: only what a person clicks at the top; everything else in
+          # app\ (the .bat files find it there - see "Start Interpreter.bat").
+          mkdir -p win
+          git archive --format=tar --prefix=Interpreter/app/ HEAD -- . ':!android' ':!.github' | tar -x -C win
+          mv "win/Interpreter/app/Start Interpreter.bat" "win/Interpreter/app/Stop Interpreter.bat" win/Interpreter/
+          cp deploy/README-Windows.txt win/Interpreter/README.txt
+          (cd win && zip -qr ../Interpreter-Windows.zip Interpreter)
+          unzip -l Interpreter-Windows.zip | awk 'NR > 3 && $4 !~ /\/app\/./ {print $4}'
       - name: Publish to the pc-latest pre-release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="Meeting Interpreter for your computer, from commit ${GITHUB_SHA} (run ${GITHUB_RUN_ID}), checked with the real bundled Attendee. Download Interpreter-PC.zip, unzip, then double-click \"Start Interpreter\" (Windows) or run ./start.sh (Linux/Mac). Needs Docker. Replaced on every build."
+          NOTES="Meeting Interpreter for your computer, from commit ${GITHUB_SHA} (run ${GITHUB_RUN_ID}), checked with the real bundled Attendee. Windows: download Interpreter-Windows.zip, unzip, double-click \"Start Interpreter\". Linux/Mac: download Interpreter-PC.zip, unzip, run ./start.sh. Needs Docker. Replaced on every build."
           if ! gh release view pc-latest >/dev/null 2>&1; then
             gh release create pc-latest --prerelease --target "$GITHUB_SHA" --title "Meeting Interpreter for your computer - latest" --notes "$NOTES"
           fi
-          gh release upload pc-latest Interpreter-PC.zip --clobber
+          gh release upload pc-latest Interpreter-PC.zip Interpreter-Windows.zip --clobber
           gh release edit pc-latest --notes "$NOTES"
