@@ -145,3 +145,16 @@ def test_bot_reaches_the_translator_over_tls(setup_dir: Path, tmp_path: Path) ->
     finally:
         server.terminate()
         server.wait(timeout=15)
+
+
+def test_zoom_without_credentials_is_explained_not_linked() -> None:
+    from app.server import _explain_attendee_rejection
+
+    # Attendee v1.79.2's exact rejection (bots/bots_api_utils.py validate_meeting_url_and_credentials)
+    detail = (
+        '{"error":"Zoom App credentials are required to create a Zoom bot. Please add Zoom credentials '
+        'at http://localhost:8000/projects/proj_R9o0X2BCMnEBKgTX/credentials"}'
+    )
+    message = _explain_attendee_rejection(detail)
+    assert message and "Google Meet" in message and "localhost" not in message
+    assert _explain_attendee_rejection('{"meeting_url":["invalid"]}') is None

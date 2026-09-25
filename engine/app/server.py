@@ -89,11 +89,35 @@ def _bridge_ws_url(request: Request) -> str:
     return f"{base}?token={_BRIDGE_TOKEN}"
 
 
+# Rejections a person can act on, phrased for them. Attendee's own wording
+# points at its web UI (e.g. "add Zoom credentials at http://localhost:8000/..."),
+# which the bundled setup doesn't expose.
+_ATTENDEE_REJECTIONS = {
+    "Zoom App credentials are required": (
+        "Zoom meetings need a Zoom developer app set up first. Google Meet and Microsoft Teams "
+        "work right away - send the interpreter to a Meet or Teams link instead."
+    ),
+    "exceeded the maximum number of concurrent bots": (
+        "The interpreter is already in another meeting. Remove it from that meeting first."
+    ),
+}
+
+
+def _explain_attendee_rejection(detail: str) -> str | None:
+    for marker, message in _ATTENDEE_REJECTIONS.items():
+        if marker in detail:
+            return message
+    return None
+
+
 async def _call_attendee(call: Any) -> dict[str, Any]:
     client = _attendee_client()
     try:
         return await call(client)
     except AttendeeError as error:
+        friendly = _explain_attendee_rejection(error.detail)
+        if friendly:
+            raise HTTPException(400, friendly) from error
         raise HTTPException(502, f"Attendee rejected the request ({error.status_code}): {error.detail}") from error
     except (OSError, httpx.TransportError) as error:
         log_event(_logger, logging.WARNING, "attendee_unreachable", base_url=os.environ.get("ATTENDEE_BASE_URL"), error=repr(error))

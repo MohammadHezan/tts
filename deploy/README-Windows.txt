@@ -35,7 +35,9 @@ NEEDS: Windows 10/11, 16 GB of memory, about 20 GB of free disk space.
 
 
 3. USE IT
-   1. Start a Google Meet and copy its link.
+   1. Start a Google Meet (meet.google.com -> New meeting -> Start an
+      instant meeting) and copy its link. Teams links work too. Zoom links
+      don't yet: Zoom only lets bots in through a Zoom developer app.
    2. On your phone: Interpreter app -> Meeting Bot. It finds this PC by
       itself (same Wi-Fi). Paste the link, tap "Send interpreter into
       meeting". (Or paste it on the page that opened on this PC.)
