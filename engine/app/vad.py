@@ -26,8 +26,10 @@ import numpy as np
 from app.config import VadConfig
 
 MODEL_WINDOW_SAMPLES = 512  # fixed window size the 16kHz Silero VAD model requires
-QUIETEST_FRAME_MS = 30  # resolution when a phrase has to be cut without a pause
-QUIETEST_SEARCH_MS = 1000  # ... searched for in the last this-much of it
+PAUSE_FRAME_MS = 20  # loudness resolution for spotting a pause mid-phrase
+PAUSE_BELOW_SPEECH_DB = 18  # a pause is at least this much quieter than the phrase's speech
+QUIETEST_FRAME_MS = 100  # a phrase cut without a pause goes in the quietest stretch this long
+QUIETEST_HOP_MS = 10
 
 
 class VadEventType(str, Enum):
@@ -140,8 +142,7 @@ class SpeechEndpointer:
 
     def _maybe_end_phrase(self) -> list[VadEvent]:
         """Mid-utterance: end the phrase so far if it is long enough and the
-        speaker has paused briefly (VADIterator.temp_end: where the quiet
-        started), or if it has run too long without one."""
+        speaker has paused briefly, or if it has run too long without one."""
         cfg = self.cfg
         if not self._triggered or cfg.phrase_min_ms is None:
             return []
@@ -149,13 +150,10 @@ class SpeechEndpointer:
         length = self._sample_pos - start
         if length < self._samples(cfg.phrase_min_ms):
             return []
-        quiet_since = getattr(self.iterator, "temp_end", 0) or 0
-        if quiet_since > start and self._sample_pos - quiet_since >= self._samples(cfg.phrase_pause_ms):
-            split = min(quiet_since + self._samples(min(cfg.speech_pad_ms, cfg.phrase_pause_ms)), self._sample_pos)
+        if self._paused(start):
+            split = self._sample_pos - self._samples(cfg.phrase_pause_ms) // 2  # the middle of the pause
         elif cfg.phrase_max_ms is not None and length >= self._samples(cfg.phrase_max_ms):
-            split = self._quietest_point(
-                max(start + self._samples(cfg.phrase_min_ms), self._sample_pos - self._samples(QUIETEST_SEARCH_MS))
-            )
+            split = self._quietest_point(start + self._samples(cfg.phrase_min_ms))
         else:
             return []
         audio = self._slice_history(start, split)
@@ -168,16 +166,33 @@ class SpeechEndpointer:
             VadEvent(type=VadEventType.SPEECH_START, sample_pos=split),
         ]
 
+    def _paused(self, start: int) -> bool:
+        """The speaker has been quiet for the last phrase_pause_ms: every
+        PAUSE_FRAME_MS of it well below the phrase's speech. Judged by loudness,
+        not by Silero: its probability also dips under the threshold inside
+        words, and a phrase cut there splits a word in half ("في بـ|داية")."""
+        pause = self._samples(self.cfg.phrase_pause_ms)
+        frame = self._samples(PAUSE_FRAME_MS)
+        audio = self._slice_history(start, self._sample_pos).astype(np.float64)
+        tail = max(1, pause // frame)
+        if len(audio) < (tail + 1) * frame:
+            return False
+        frames = audio[len(audio) % frame :].reshape(-1, frame)
+        db = 10 * np.log10(np.mean(frames**2, axis=1) + 1.0)
+        speech = float(np.percentile(db[:-tail], 90))
+        return bool(np.all(db[-tail:] < speech - PAUSE_BELOW_SPEECH_DB))
+
     def _quietest_point(self, from_sample: int) -> int:
-        """Middle of the quietest QUIETEST_FRAME_MS frame from from_sample to
-        now - most likely the gap between two words."""
+        """Middle of the quietest QUIETEST_FRAME_MS stretch from from_sample to
+        now - most likely a gap between two words. Long enough that the brief
+        silence inside a consonant (a "d", a "t") doesn't count."""
         frame = self._samples(QUIETEST_FRAME_MS)
+        hop = self._samples(QUIETEST_HOP_MS)
         audio = self._slice_history(from_sample, self._sample_pos).astype(np.float64)
         if len(audio) < frame:
             return self._sample_pos
-        frames = audio[: len(audio) // frame * frame].reshape(-1, frame)
-        quietest = int(np.argmin((frames**2).sum(axis=1)))
-        return from_sample + quietest * frame + frame // 2
+        energy = np.convolve(audio**2, np.ones(frame), mode="valid")[::hop]
+        return from_sample + int(np.argmin(energy)) * hop + frame // 2
 
     def _maybe_speech_end(self, start_sample: int, end_sample: int, audio: np.ndarray) -> VadEvent | None:
         duration_ms = (end_sample - start_sample) * 1000 / self.sample_rate

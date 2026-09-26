@@ -27,7 +27,7 @@ vad:
   # spoken while the speaker carries on. Remove phrase_min_ms to wait for
   # whole sentences instead.
   phrase_min_ms: 3500
-  phrase_pause_ms: 250
+  phrase_pause_ms: 200 # a comma-length pause (quieter than speech - see vad.py)
   phrase_max_ms: 8000 # no pause by then: cut at the quietest moment
 
 asr:

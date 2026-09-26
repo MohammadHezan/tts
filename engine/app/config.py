@@ -65,10 +65,10 @@ class VadConfig(BaseModel):
     # Phrase by phrase: once someone has been talking for phrase_min_ms, the
     # next pause of phrase_pause_ms ends a phrase (~10 words) that is
     # translated while they carry on; past phrase_max_ms without such a pause,
-    # the phrase ends at the quietest moment of the last second. None = whole
+    # the phrase ends at its quietest moment. None = whole
     # utterances only (they end after min_silence_ms of silence).
     phrase_min_ms: int | None = None
-    phrase_pause_ms: int = 250
+    phrase_pause_ms: int = 200
     phrase_max_ms: int | None = 8000
 
 

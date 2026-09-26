@@ -12,7 +12,8 @@ translator or TTS internals, they just push PCM16 frames in and read events out.
 background=True (the meeting bot): process_frame only listens and transcribes;
 translating and speaking happen in a queue behind it, in the order things
 were said, and come out of background_events(). So the next phrase is heard
-and transcribed while the last one is still being translated and spoken.
+and transcribed while the last one is still being translated and spoken, and
+translated while the voice for the last one is still being fetched.
 Phrases that pile up in the queue from the same speaker go to the translator
 together - fewer, better-connected translations when the machine falls behind.
 """
@@ -93,8 +94,10 @@ class Pipeline:
         self._context: deque[TurnContext] = deque(maxlen=max(0, cfg.translator.context_turns))
         self._background = background
         self._jobs: asyncio.Queue[tuple[_Turn, AsrHypothesis] | None] = asyncio.Queue()
+        self._spoken: asyncio.Queue[PipelineEvent | asyncio.Task[PipelineEvent] | None] = asyncio.Queue()
         self._out: asyncio.Queue[PipelineEvent | None] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
+        self._speaker: asyncio.Task[None] | None = None
 
     async def process_frame(self, pcm16: bytes) -> AsyncIterator[PipelineEvent]:
         """Feed one frame of 16kHz mono PCM16 audio; yields zero or more events."""
@@ -122,13 +125,15 @@ class Pipeline:
             self._jobs.put_nowait(None)
             if self._worker is not None:
                 await self._worker
+                await self._speaker
             else:
                 self._out.put_nowait(None)
 
     def close(self) -> None:
         """Stops the background queue without finishing it (flush() finishes it)."""
-        if self._worker is not None and not self._worker.done():
-            self._worker.cancel()
+        for task in (self._worker, self._speaker):
+            if task is not None and not task.done():
+                task.cancel()
 
     async def background_events(self) -> AsyncIterator[PipelineEvent]:
         """background=True: the translation, voice and error events, in the
@@ -195,6 +200,7 @@ class Pipeline:
         elif self._background:
             if self._worker is None:
                 self._worker = asyncio.create_task(self._work())
+                self._speaker = asyncio.create_task(self._hand_on())
             self._jobs.put_nowait((turn, hyp))
         else:
             async for event in self._translate_and_speak(turn, hyp):
@@ -219,13 +225,46 @@ class Pipeline:
                 self._complete(turn)
                 turn, hyp = later, AsrHypothesis(text=f"{hyp.text} {later_hyp.text}", language=hyp.language, is_final=True)
             try:
-                async for event in self._translate_and_speak(turn, hyp):
-                    self._out.put_nowait(event)
+                # Voices still being fetched go along as tasks: the next phrase
+                # is translated meanwhile, and _hand_on() keeps the order.
+                async for item in self._interpret(turn, hyp):
+                    self._spoken.put_nowait(item)
             except Exception as error:  # never let one phrase stop the ones after it
-                self._out.put_nowait(self._error_event(turn, hyp.language, "translation", error))
+                self._spoken.put_nowait(self._error_event(turn, hyp.language, "translation", error))
+        self._spoken.put_nowait(None)
+
+    async def _hand_on(self) -> None:
+        """background=True: _work()'s events out to background_events(), in
+        order, each voice once it's ready."""
+        while (item := await self._spoken.get()) is not None:
+            self._out.put_nowait(await item if isinstance(item, asyncio.Task) else item)
         self._out.put_nowait(None)
 
     async def _translate_and_speak(self, turn: _Turn, hyp: AsrHypothesis) -> AsyncIterator[PipelineEvent]:
+        """_interpret() for a caller that takes events as they come: each voice
+        is waited for once the next sentence has been translated."""
+        speaking: asyncio.Task[PipelineEvent] | None = None
+        try:
+            async for item in self._interpret(turn, hyp):
+                if not isinstance(item, asyncio.Task):
+                    yield item
+                    continue
+                if speaking is not None:
+                    yield await speaking
+                speaking = item
+            if speaking is not None:
+                yield await speaking
+        finally:
+            if speaking is not None:
+                speaking.cancel()  # the caller stopped listening; a no-op once done
+
+    async def _interpret(
+        self, turn: _Turn, hyp: AsrHypothesis
+    ) -> AsyncIterator[PipelineEvent | asyncio.Task[PipelineEvent]]:
+        """Translates hyp sentence by sentence. After each TRANSLATION event
+        comes the voice for it as a task already under way - the voice service
+        takes 0.5-2s to answer, time spent translating what comes next. The
+        caller hands each task's AUDIO (or ERROR) event on in this order."""
         source_lang = hyp.language
         target_lang = (
             self._cfg.translator.target_lang
@@ -248,23 +287,8 @@ class Pipeline:
                 continue
             translated_sentences.append(translated)
             yield self._event(turn, EventType.TRANSLATION, target_lang, translated, is_final_segment=True)
-
             if self._tts is not None and (self._should_speak is None or self._should_speak()):
-                try:
-                    with tracker.stage(f"tts[{i}]"):
-                        audio = await self._tts.synthesize(translated, target_lang)
-                except Exception as error:
-                    yield self._error_event(turn, target_lang, "speech", error)
-                    continue
-                yield self._event(
-                    turn,
-                    EventType.AUDIO,
-                    target_lang,
-                    translated,
-                    is_final_segment=True,
-                    audio=audio.pcm16,
-                    audio_sample_rate=audio.sample_rate,
-                )
+                yield asyncio.create_task(self._speak(turn, translated, target_lang, i))
 
         if translated_sentences:
             self._context.append(
@@ -276,6 +300,24 @@ class Pipeline:
                 )
             )
         self._complete(turn)
+
+    async def _speak(self, turn: _Turn, text: str, lang: str, index: int) -> PipelineEvent:
+        """The AUDIO event for one translated sentence, or an ERROR event if no voice could say it."""
+        assert self._tts is not None
+        try:
+            with turn.tracker.stage(f"tts[{index}]"):
+                audio = await self._tts.synthesize(text, lang)
+        except Exception as error:
+            return self._error_event(turn, lang, "speech", error)
+        return self._event(
+            turn,
+            EventType.AUDIO,
+            lang,
+            text,
+            is_final_segment=True,
+            audio=audio.pcm16,
+            audio_sample_rate=audio.sample_rate,
+        )
 
     def _complete(self, turn: _Turn) -> None:
         self._latency_by_turn[turn.turn_id] = turn.tracker.as_dict()

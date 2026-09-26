@@ -77,6 +77,15 @@ def _take_spare_asr() -> Any:
     return asr
 
 
+def _keep_spare_asr(asr: Any) -> None:
+    """A finished bot's ASR becomes the next one's: no reload when a bot is sent
+    in again or Attendee reconnects, and no second copy in video memory."""
+    global _spare_asr
+    with _spare_asr_lock:
+        if _spare_asr is None:
+            _spare_asr = asr
+
+
 if os.environ.get("INTERPRETER_PRELOAD_ASR") == "1":
     threading.Thread(target=_preload_spare_asr, name="asr-preload", daemon=True).start()
 _translator = build_translator_provider(_cfg.translator)
@@ -372,16 +381,19 @@ async def attendee_bridge(ws: WebSocket) -> None:
     # constructing one loads the ASR model, which must not block the event loop.
     asr = _take_spare_asr() or await asyncio.to_thread(build_asr_provider, _cfg.asr)
     frame_bytes = _cfg.audio.frame_samples * 2
-    await run_bridge(
-        ws,
-        lambda **hooks: Pipeline(_cfg, asr, _translator, _tts, emit_partials=False, **hooks),
-        _cfg.audio.sample_rate_hz,
-        frame_bytes,
-        _bot_hub,
-        _bot_controls,
-        half_duplex=_cfg.vad.phrase_min_ms is None,  # phrase by phrase, people talk while it speaks
-    )
-    warm_up.cancel()
+    try:
+        await run_bridge(
+            ws,
+            lambda **hooks: Pipeline(_cfg, asr, _translator, _tts, emit_partials=False, **hooks),
+            _cfg.audio.sample_rate_hz,
+            frame_bytes,
+            _bot_hub,
+            _bot_controls,
+            half_duplex=_cfg.vad.phrase_min_ms is None,  # phrase by phrase, people talk while it speaks
+        )
+    finally:
+        warm_up.cancel()
+        _keep_spare_asr(asr)
 
 
 async def _warm_up_translator() -> None:
