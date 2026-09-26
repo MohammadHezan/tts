@@ -9,8 +9,7 @@ import kotlin.concurrent.thread
 
 /**
  * Plays queued translated-sentence audio back-to-back on a dedicated thread,
- * so sentences never overlap or clip and playback never blocks mic capture -
- * mirrors engine/cli/audio_playback.py's AudioPlayer.
+ * so sentences never overlap or clip and playback never blocks mic capture.
  */
 class AudioPlayback {
     private val queue = LinkedBlockingQueue<Pair<ByteArray, Int>>()

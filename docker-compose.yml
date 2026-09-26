@@ -11,9 +11,6 @@
 #   - ollama-pull     downloads the ~4.9GB translation model
 # Only the translator's port (8765) is published. Attendee, its database and
 # Redis are reachable only inside this stack's Docker network.
-#
-# Using an Attendee you run elsewhere instead: see
-# docker-compose.external-attendee.yml.
 
 # Fixed, so volumes (and the ~15GB of downloads in them) don't depend on what
 # the folder happens to be called.
@@ -22,7 +19,7 @@ name: interpreter
 x-attendee: &attendee
   # Attendee (Elastic License 2.0, github.com/attendee-labs/attendee), built
   # unmodified from the tagged release: CI publishes the build to this image
-  # (publish-images.yml), and the build section is the fallback if it can't be
+  # (one-click-stack.yml), and the build section is the fallback if it can't be
   # pulled. The scripts it runs come from our setup volume, not the image.
   image: ghcr.io/mohammadhezan/interpreter-attendee:1.79.2
   build:
@@ -58,8 +55,6 @@ services:
       INTERPRETER_PHONE_URL: ${INTERPRETER_PHONE_URL:-} # set by the start scripts
       INTERPRETER_GPU_STATUS: ${INTERPRETER_GPU_STATUS:-} # the start scripts' graphics-card check, for the page
       INTERPRETER_PRELOAD_ASR: "1" # load Whisper at start: the first bot joins faster, and the page knows CPU vs GPU
-    extra_hosts:
-      - "host.docker.internal:host-gateway" # for docker-compose.external-attendee.yml on Linux
     volumes:
       - interpreter-setup:/setup:ro
     healthcheck:

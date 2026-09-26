@@ -5,7 +5,6 @@ so starting the interpreter never involves downloading voice files by hand.
     /models/ar_JO-kareem-medium.onnx(.json)         Arabic voice (Piper)
     Hugging Face cache: Whisper "small"             speech recognition
 
-Same files and URLs as the README's manual setup and meeting-simulation.yml.
 The translation model is not here: Ollama keeps its own store, filled once by
 docker-compose.yml's ollama-pull service.
 """

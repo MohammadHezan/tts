@@ -31,13 +31,3 @@ piper-tts>=1.8,<2.0
 # Microsoft's neural voices (the ones Edge's Read Aloud uses; LGPL-3.0, no key,
 # online) - tts.provider neural, with Kokoro/Piper above as the offline fallback.
 edge-tts>=7.0,<8.0
-
-# Live mic capture (CLI harness). Requires system libportaudio2 at runtime.
-sounddevice>=0.4.6,<1.0
-
-# Benchmarking
-jiwer>=3.0,<5.0
-
-# Tests
-pytest>=8.0,<10.0
-pytest-asyncio>=0.23,<2.0

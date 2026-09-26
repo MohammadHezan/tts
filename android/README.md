@@ -67,77 +67,45 @@ live. Leaving the screen doesn't pull the bot out - *Remove interpreter* does.
 Source: `app/src/main/kotlin/com/interpreter/app/meetingbot/` -
 `MeetingBotApi.kt` (the server's `/api/bots` REST + caption websocket),
 `ServerFinder.kt`, `MeetingBotViewModel.kt`, `MeetingBotScreen.kt`; the subnet
-math is `core`'s `SubnetScan.kt` (unit-tested). Captions go through core's
+math is `core`'s `SubnetScan.kt`. Captions go through core's
 existing `ConversationState` reducer unchanged - the server sends the same
 `PipelineEvent` JSON Engine mode already parses.
 
-## Two modules, on purpose
+## Two modules
 
 ```
 android/
-├── core/   # pure Kotlin/JVM - wire protocol, state, audio framing. No Android
-│           # dependency, builds+tests with plain Gradle (no Android SDK needed).
-└── app/    # the actual Android app - UI, AudioRecord/AudioTrack, Bluetooth
+├── core/   # pure Kotlin/JVM - wire protocol, state, audio framing, subnet math.
+│           # No Android dependency.
+└── app/    # the Android app - UI, AudioRecord/AudioTrack, Bluetooth
             # routing, foreground service. Needs the Android SDK (Android Studio).
 ```
 
-This split exists because `:core` was built and unit-tested in a
-network-sandboxed environment that has Java/Gradle/Maven Central but **not**
-`dl.google.com` (where the Android SDK and AndroidX libraries live) - so it's
-the one part of this app that's been genuinely compiled and tested, not just
-written to spec. Run it yourself:
+**`:core`**
 
-```bash
-cd android
-./gradlew :core:test    # or: gradle :core:test  (11 tests, real JVM execution)
-```
-
-`:app` needs Android Studio (or a machine with the Android SDK installed) to
-build - see [Building](#building) below.
-
-## What's in `:core` (tested here)
-
-- `PipelineEvent.kt` / `EventType.kt` - mirrors `engine/app/schema.py` exactly,
-  parsed via kotlinx.serialization with a snake_case↔camelCase naming bridge.
+- `PipelineEvent.kt` / `EventType.kt` - mirror `engine/app/schema.py`,
+  parsed with kotlinx.serialization.
 - `ConversationState.kt` - a pure reducer over the event stream (partial
-  caption, completed turns with their translations) - the same shape a
-  ViewModel exposes to the UI, fully testable without Android.
-- `AudioFraming.kt` - PCM16 frame-size/slicing helpers matching
-  `engine/app/audio_utils.py`'s `iter_frames`.
+  caption, completed turns with their translations).
+- `AudioFraming.kt` - PCM16 frame helpers matching `engine/app/audio_utils.py`.
+- `SubnetScan.kt` - the addresses the Meeting Bot screen asks for the PC.
 
-## What's in `:app` (written to spec, not compiled here)
+**`:app`**
 
-- `standalone/` - the default, server-free mode (see above): on-device ASR,
-  ML Kit translation, platform TTS, and the ViewModel/UI wiring them
-  together. No dependency on anything else in this repo.
-- `network/EngineWebSocketClient.kt` - OkHttp WebSocket client; every API call
-  in it (`WebSocket.send(ByteString)`, `WebSocketListener` callback
-  signatures, `ByteString.of(...)`) was checked against the real OkHttp/Okio
-  4.12.0/3.9.0 jars downloaded from Maven Central and inspected with `javap`
-  in this sandbox - not guessed.
+- `standalone/` - the default, server-free mode (see above).
+- `meetingbot/` - the Meeting Bot screen (see above).
+- `network/EngineWebSocketClient.kt` - OkHttp WebSocket client for Engine mode.
 - `audio/MicCapture.kt`, `audio/AudioPlayback.kt` - AudioRecord/AudioTrack
-  wrappers, mirroring `engine/cli/translate_mic.py`'s capture/playback loop.
-- `audio/BluetoothAudioRouting.kt` - **prefers LE Audio (LC3) over classic
-  Bluetooth** via `AudioManager.setCommunicationDevice`/
-  `availableCommunicationDevices` (API 31+, why minSdk is 31). This is the
-  single biggest lever for closing the latency gap with Samsung's own
-  Interpreter mode on the same Buds 3 Pro - LC3 round-trips at ~50-100ms
-  versus ~120-200ms on classic AAC Bluetooth.
-- `service/InterpreterForegroundService.kt` - owns the whole session (mic +
-  WS + playback) so backgrounding the app mid-conversation doesn't drop it.
-- `ui/` - single-screen Compose UI: connection status, editable engine
-  address, big live caption, scrollback of completed turns with their
-  translations. Dark theme, per spec.
+  wrappers.
+- `audio/BluetoothAudioRouting.kt` - prefers LE Audio (LC3) over classic
+  Bluetooth via `AudioManager.setCommunicationDevice` (API 31+, why minSdk is
+  31): about 50-100 ms round trip on the Buds 3 Pro versus 120-200 ms on AAC.
+- `service/InterpreterForegroundService.kt` - owns the session (mic + WS +
+  playback) so backgrounding the app doesn't drop it.
+- `ui/` - Compose UI, dark theme.
 
-This part genuinely cannot be verified without the Android SDK (`dl.google.com`
-is blocked in the sandbox this was built in - see the main README's
-"Validation notes" for the same constraint on the Python side). It was
-written carefully against well-established, stable Android APIs, and every
-API I was *not* fully certain of was checked against real downloaded
-artifacts rather than guessed - two real mistakes were caught this way
-(a nonexistent `stringResourceCompat` typo, and a nonexistent
-`ByteArray.toByteString()` extension that doesn't actually exist in Okio's
-public API). Expect at most minor first-build fixups, not a rewrite.
+CI (`.github/workflows/build-android.yml`) builds the debug APK and publishes
+it to the [android-latest pre-release](https://github.com/MohammadHezan/tts/releases/tag/android-latest).
 
 ## Building
 

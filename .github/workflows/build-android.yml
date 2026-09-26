@@ -1,9 +1,6 @@
 name: Build Android APK
 
-# Builds android/app on a GitHub-hosted runner, which has unrestricted
-# internet (dl.google.com etc.) - unlike the sandbox this repo was originally
-# built in, where only android/core (pure Kotlin) could be built/tested.
-# See android/README.md for that split's full explanation.
+# Builds android/app on a GitHub-hosted runner and publishes the debug APK.
 
 on:
   workflow_dispatch:

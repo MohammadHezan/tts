@@ -14,7 +14,7 @@ WORKDIR /srv/tts
 
 COPY engine/requirements.txt engine/requirements.txt
 # CPU-only torch first (silero-vad's metadata pulls torch in; the default
-# wheel drags several GB of unused CUDA packages - see build-linux.yml).
+# wheel drags several GB of unused CUDA packages).
 # cryptography is for deploy/setup_secrets.py (the bundled Attendee's certificate).
 RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
  && pip install --no-cache-dir -r engine/requirements.txt "cryptography>=42"
