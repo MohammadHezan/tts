@@ -5,9 +5,10 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 #
-# Whisper large-v3-turbo on the GPU hears Arabic far better than the CPU
-# default (small), and the translation model - Gemma 3 12B here, better Arabic
-# than the CPU's Llama 3.1 8B, ~8GB more to download once - answers in about a
+# Speech recognition is Cohere Transcribe Arabic (a dialect fine-tune, ~4GB,
+# downloaded once by asr-pull) - far better at Jordanian Arabic than any
+# Whisper - and the translation model - Gemma 3 12B here, better Arabic
+# than the CPU's Llama 3.1 8B, ~7GB more to download once - answers in about a
 # second instead of several. Needs a current NVIDIA driver plus GPU support in Docker: on
 # Windows, Docker Desktop with the WSL 2 backend; on Linux, the NVIDIA Container
 # Toolkit. Set INTERPRETER_CPU=1 before starting to stay on the CPU anyway.
@@ -28,9 +29,23 @@ services:
       context: .
       args:
         VARIANT: gpu
-        WHISPER_MODEL: large-v3-turbo
+        WHISPER_MODEL: small # for the CPU fallback; large-v3-turbo downloads only if ever needed
     environment:
       ENGINE_CONFIG_PATH: /srv/tts/deploy/config.docker-gpu.yaml
+    volumes:
+      - interpreter-asr:/models/asr
+    depends_on:
+      asr-pull:
+        condition: service_completed_successfully
+
+  asr-pull:
+    image: ghcr.io/mohammadhezan/interpreter-translator:gpu
+    environment:
+      ENGINE_CONFIG_PATH: /srv/tts/deploy/config.docker-gpu.yaml
+    command: ["python", "/srv/tts/deploy/download_asr.py"]
+    volumes:
+      - interpreter-asr:/models/asr
+    restart: "no"
 
   ollama:
     <<: *gpu
@@ -41,4 +56,7 @@ services:
       OLLAMA_KV_CACHE_TYPE: q8_0
 
   ollama-pull:
-    entrypoint: ["ollama", "pull", "gemma3:12b"]
+    entrypoint: ["ollama", "pull", "hf.co/unsloth/gemma-3-12b-it-GGUF:IQ4_XS"]
+
+volumes:
+  interpreter-asr:

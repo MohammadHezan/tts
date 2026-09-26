@@ -84,16 +84,20 @@ say "Getting the interpreter ready. The first time this downloads about 15 GB."
 "${DOCKER[@]}" compose pull --ignore-pull-failures || true
 "${DOCKER[@]}" compose up -d
 
-MODEL_GB=4.9
-[ "$USE_GPU" = 1 ] && MODEL_GB=8.1  # Gemma 3 12B on the graphics card (docker-compose.gpu.yml)
-say "Starting up (the first start also downloads the $MODEL_GB GB translation model)..."
+MODELS="the 4.9 GB translation model"
+PULLS="setup attendee-setup ollama-pull"
+if [ "$USE_GPU" = 1 ]; then  # docker-compose.gpu.yml: Gemma 3 12B, and the speech model
+  MODELS="the 7.4 GB translation model and the 4 GB speech model"
+  PULLS="$PULLS asr-pull"
+fi
+say "Starting up (the first start also downloads $MODELS)..."
 started=$(date +%s)
 until curl -fsS -m 5 http://localhost:8765/healthz >/dev/null 2>&1; do
   # A one-shot setup step that failed, or the translator crashing in a loop.
   if "${DOCKER[@]}" compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}}' 2>/dev/null \
-      | awk '($1 ~ /^(setup|attendee-setup|ollama-pull)$/ && $2 == "exited" && $3 != "0") || ($1 == "translator" && $2 == "restarting") {bad = 1} END {exit !bad}'; then
+      | awk '($1 ~ /^(setup|attendee-setup|ollama-pull|asr-pull)$/ && $2 == "exited" && $3 != "0") || ($1 == "translator" && $2 == "restarting") {bad = 1} END {exit !bad}'; then
     say "Something failed while starting. Details:"
-    "${DOCKER[@]}" compose logs --tail 40 setup attendee-setup ollama-pull translator || true
+    "${DOCKER[@]}" compose logs --tail 40 $PULLS translator || true
     exit 1
   fi
   if [ $(( $(date +%s) - started )) -gt 5400 ]; then

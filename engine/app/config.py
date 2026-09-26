@@ -72,8 +72,21 @@ class VadConfig(BaseModel):
     phrase_max_ms: int | None = 8000
 
 
+class CohereAsrConfig(BaseModel):
+    """asr.provider cohere - see app/providers/asr_cohere.py."""
+
+    model: str = "oddadmix/cohere-transcribe-arabic-07-2026-dialectal-v2"
+    revision: str | None = None  # a commit hash pins exactly what was tested
+    processor: str = "Newmetrics/cohere-transcribe-arabic-07-2026"  # the dialect repo ships no processor files
+    processor_revision: str | None = None
+    cache_dir: str | None = None
+    quantize: Literal["none", "int8"] = "int8"
+
+
 class AsrConfig(BaseModel):
-    provider: Literal["faster_whisper", "fake"] = "faster_whisper"
+    # cohere: Cohere Transcribe Arabic, falling back to faster_whisper with the
+    # settings below if it can't load.
+    provider: Literal["faster_whisper", "cohere", "fake"] = "faster_whisper"
     model: str = "large-v3-turbo"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     compute_type: str = "auto"
@@ -92,6 +105,7 @@ class AsrConfig(BaseModel):
     candidate_languages: list[str] = Field(default_factory=list)
     beam_size: int = 1
     local_agreement: LocalAgreementConfig = Field(default_factory=LocalAgreementConfig)
+    cohere: CohereAsrConfig = Field(default_factory=CohereAsrConfig)
 
 
 class OllamaConfig(BaseModel):

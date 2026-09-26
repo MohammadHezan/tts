@@ -87,6 +87,10 @@ def build_asr_provider(cfg: AsrConfig) -> AsrProvider:
         from app.providers.asr_faster_whisper import FasterWhisperAsr
 
         return FasterWhisperAsr(cfg)
+    if cfg.provider == "cohere":
+        from app.providers import asr_cohere
+
+        return asr_cohere.build(cfg)
     if cfg.provider == "fake":
         from app.providers.asr_fake import FakeAsr
 

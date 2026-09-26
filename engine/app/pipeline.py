@@ -285,6 +285,8 @@ class Pipeline:
             except Exception as error:
                 yield self._error_event(turn, target_lang, "translation", error)
                 continue
+            if not translated:
+                continue  # nothing left to say once the model's remarks are removed
             translated_sentences.append(translated)
             yield self._event(turn, EventType.TRANSLATION, target_lang, translated, is_final_segment=True)
             if self._tts is not None and (self._should_speak is None or self._should_speak()):

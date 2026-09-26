@@ -49,8 +49,13 @@ def build_system_prompt(domain_prompt: str, glossary: Glossary | None = None) ->
         "talking, so a message can be part of a sentence. Translate just that "
         "part so it follows on from the previous one - never finish the "
         "sentence or guess what comes next.\n"
-        "- Arabic: clear Modern Standard Arabic suitable for a business setting. "
-        "English: natural business English with an Australian register.\n"
+        "- Arabic speakers usually talk in Jordanian (Levantine) dialect, and every "
+        "message comes from speech recognition, which can garble a word: translate "
+        "what the speaker meant. Never comment on the message, say it is unclear, "
+        "or ask what it means - give your best translation.\n"
+        "- Translating into Arabic: always clear Modern Standard Arabic suitable for "
+        "a business setting, never dialect. Into English: natural business English "
+        "with an Australian register.\n"
         "- Preserve proper names, brand names, product codes, and numbers "
         "(prices, quantities, dates, measurements) EXACTLY as given - do not "
         "convert units or currencies.\n"
@@ -86,6 +91,9 @@ def max_output_tokens(text: str) -> int:
 
 
 _LABEL = re.compile(r"^\s*(translation|الترجمة)\s*[:：]\s*", re.IGNORECASE)
+# A remark about the text instead of a translation of it: "(This appears to be
+# nonsensical or slang." - the bot would say it into the meeting.
+_NOTE = re.compile(r"\s*[(\[](note|this (appears|seems|is not|text|message)|the (text|message|phrase|sentence)|i )[^)\]]*[)\]]?\s*$", re.IGNORECASE)
 _QUOTES = "\"'“”«»"
 # Faithful translations stay well under this length ratio (Arabic <-> English
 # lengths are close); a reply the model tacked on is what pushes past it.
@@ -98,7 +106,7 @@ def clean_translation(source: str, output: str) -> str:
     sentences nobody said (a follow-up question, an offer to help), which the
     bot would otherwise speak into the meeting as if the speaker had said them.
     """
-    text = _LABEL.sub("", output.strip())
+    text = _NOTE.sub("", _LABEL.sub("", output.strip()))
     if len(text) > 1 and text[0] in _QUOTES and text[-1] in _QUOTES:
         text = text[1:-1].strip()
 

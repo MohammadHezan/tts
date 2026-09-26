@@ -18,7 +18,7 @@ vad:
   provider: silero
   threshold: 0.6
   min_speech_ms: 250 # still catches a short "yes" / "نعم"
-  min_silence_ms: 600 # a sentence ends 0.6s after the speaker stops
+  min_silence_ms: 500 # a sentence ends 0.5s after the speaker stops
   speech_pad_ms: 200
   min_utterance_dbfs: -50 # quieter than this is noise, not someone talking
   min_voiced_ms: 45 # breaths/clicks/keyboard have no voice pitch at all; a one-word "yes" has 60+ms
@@ -71,8 +71,8 @@ tts:
       en: en-US-AndrewNeural
       ar: ar-JO-TaimNeural
     rates: # relative to the voice's own pace: "-10%" slower, "+10%" faster
-      en: "-15%"
-      ar: "-10%"
+      en: "-5%"
+      ar: "+0%"
     timeout_s: 6.0
   kokoro:
     model_path: /models/kokoro-v1.0.onnx

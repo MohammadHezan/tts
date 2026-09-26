@@ -154,8 +154,13 @@ Say 'Getting the interpreter ready. The first time this downloads about 15 GB.'
 & docker compose up -d
 if ($LASTEXITCODE -ne 0) { Say 'Starting failed - see the messages above.'; exit 1 }
 
-$modelGb = if ($useGpu) { '8.1' } else { '4.9' }  # Gemma 3 12B on the graphics card (docker-compose.gpu.yml)
-Say "Starting up (the first start also downloads the $modelGb GB translation model)..."
+$models = 'the 4.9 GB translation model'
+$pulls = @('setup', 'attendee-setup', 'ollama-pull')
+if ($useGpu) {  # docker-compose.gpu.yml: Gemma 3 12B, and the speech model
+    $models = 'the 7.4 GB translation model and the 4 GB speech model'
+    $pulls += 'asr-pull'
+}
+Say "Starting up (the first start also downloads $models)..."
 $started = Get-Date
 while ($true) {
     try {
@@ -164,10 +169,10 @@ while ($true) {
     } catch { }
     # A one-shot setup step that failed, or the translator crashing in a loop.
     $failed = & docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}}' |
-        Where-Object { ($_ -match '^(setup|attendee-setup|ollama-pull) exited (\d+)$' -and $Matches[2] -ne '0') -or $_ -match '^translator restarting' }
+        Where-Object { ($_ -match '^(setup|attendee-setup|ollama-pull|asr-pull) exited (\d+)$' -and $Matches[2] -ne '0') -or $_ -match '^translator restarting' }
     if ($failed) {
         Say 'Something failed while starting. Details:'
-        & docker compose logs --tail 40 setup attendee-setup ollama-pull translator
+        & docker compose logs --tail 40 @pulls translator
         exit 1
     }
     if (((Get-Date) - $started).TotalMinutes -gt 90) {

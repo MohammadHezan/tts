@@ -1,8 +1,8 @@
 # GPU variant of config.docker.yaml, used by docker-compose.gpu.yml (the start
-# scripts switch to it when Docker can use an NVIDIA GPU). Differences: Whisper
-# large-v3-turbo on the GPU - far better Arabic than small, and faster there
-# than small is on a CPU - and a shorter translation timeout, since Ollama is
-# on the GPU too. Otherwise identical; the original notes below still apply:
+# scripts switch to it when Docker can use an NVIDIA GPU). Differences: speech
+# recognition by Cohere Transcribe Arabic on the GPU (asr.cohere below), the
+# translation model (Gemma 3 12B) on the GPU too. Otherwise identical; the
+# original notes below still apply:
 #
 # Translator config for docker-compose.yml. Same schema as the repo-root
 # config.yaml, adjusted for running in a container with no GPU:
@@ -24,7 +24,7 @@ vad:
   provider: silero
   threshold: 0.6
   min_speech_ms: 250 # still catches a short "yes" / "نعم"
-  min_silence_ms: 600 # a sentence ends 0.6s after the speaker stops
+  min_silence_ms: 500 # a sentence ends 0.5s after the speaker stops
   speech_pad_ms: 200
   min_utterance_dbfs: -50 # quieter than this is noise, not someone talking
   min_voiced_ms: 45 # breaths/clicks/keyboard have no voice pitch at all; a one-word "yes" has 60+ms
@@ -37,10 +37,22 @@ vad:
   phrase_max_ms: 8000 # no pause by then: cut at the quietest moment
 
 asr:
-  provider: faster_whisper
+  # Cohere Transcribe Arabic, dialect fine-tune: on real Jordanian speech 26%
+  # word / 6.6% character errors vs 44% / 15% for Whisper large-v3-turbo, as
+  # good at English, faster. Each phrase is transcribed as Arabic and as
+  # English, and the one the model is surest of wins (99.3% right on short
+  # phrases). If it can't load, Whisper large-v3-turbo (below) takes over.
+  provider: cohere
+  cohere:
+    model: oddadmix/cohere-transcribe-arabic-07-2026-dialectal-v2 # Apache-2.0
+    revision: e6a73c8baa7edcd43dd562110cabca40e79d8041
+    processor: Newmetrics/cohere-transcribe-arabic-07-2026 # Apache-2.0 copy of CohereLabs' (gated) repo
+    processor_revision: 35dbaf071fb0eec23ae1fdcbf671d469bc607e5c
+    cache_dir: /models/asr # the interpreter-asr volume, filled once by asr-pull
+    quantize: int8 # 2.4GB of video memory instead of 4.3GB, same accuracy
   model: large-v3-turbo
   device: cuda
-  compute_type: int8_float16 # ~1GB of video memory, leaving room for the 8B translation model
+  compute_type: int8_float16
   cpu_fallback_model: small # if the GPU can't run it after all: the CPU setup's model
   language: auto
   candidate_languages: [en, ar] # auto-detect picks between these two only
@@ -61,9 +73,13 @@ translator:
   ollama:
     base_url: http://ollama:11434
     # Gemma 3 12B: clearly better Arabic than Llama 3.1 8B in the meeting
-    # simulation ("كرسي طعام", not "كرسيًا طعامًا"). ~8GB; with Whisper it fits a
-    # 12GB card (see docker-compose.gpu.yml). Too slow for the CPU config.
-    model: gemma3:12b
+    # simulation ("كرسي طعام", not "كرسيًا طعامًا"), and on par with Google's
+    # TranslateGemma 12B, which added things nobody said. IQ4_XS, the compact
+    # 4-bit build: 7.1GB of video memory instead of 7.8GB, translations just as
+    # good - so it fits a 12GB card beside the speech model with room to spare
+    # (with 7.8GB the card overflowed and every step got several times slower).
+    # Too slow for the CPU config.
+    model: hf.co/unsloth/gemma-3-12b-it-GGUF:IQ4_XS
     num_ctx: 4096
     timeout_s: 60 # the first request also loads the model into video memory
   claude:
@@ -82,8 +98,8 @@ tts:
       en: en-US-AndrewNeural
       ar: ar-JO-TaimNeural
     rates: # relative to the voice's own pace: "-10%" slower, "+10%" faster
-      en: "-15%"
-      ar: "-10%"
+      en: "-5%"
+      ar: "+0%"
     timeout_s: 6.0
   kokoro:
     model_path: /models/kokoro-v1.0.onnx

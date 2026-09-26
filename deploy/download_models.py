@@ -3,7 +3,7 @@ so starting the interpreter never involves downloading voice files by hand.
 
     /models/kokoro-v1.0.onnx, voices-v1.0.bin      English voice (Kokoro)
     /models/ar_JO-kareem-medium.onnx(.json)         Arabic voice (Piper)
-    Hugging Face cache: Whisper "small"             speech recognition
+    Hugging Face cache: Whisper "small" (and others)  speech recognition
 
 The translation model is not here: Ollama keeps its own store, filled once by
 docker-compose.yml's ollama-pull service.
@@ -26,9 +26,10 @@ FILES = {
     "ar_JO-kareem-medium.onnx": f"{PIPER}/ar_JO-kareem-medium.onnx",
     "ar_JO-kareem-medium.onnx.json": f"{PIPER}/ar_JO-kareem-medium.onnx.json",
 }
-# asr.model of the config the image runs: config.docker.yaml (CPU) or
-# config.docker-gpu.yaml (GPU) - the Dockerfile passes it in.
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL") or "small"
+# The Whisper models the image's config uses, space-separated: asr.model of
+# config.docker.yaml (CPU), or for config.docker-gpu.yaml (GPU) the fallback
+# model and the one that tells Arabic from English - the Dockerfile passes it in.
+WHISPER_MODELS = (os.environ.get("WHISPER_MODEL") or "small").split()
 
 
 def download(url: str, dest: Path, attempts: int = 5) -> None:
@@ -55,7 +56,8 @@ def main() -> None:
 
     from faster_whisper import download_model
 
-    print(f"Whisper {WHISPER_MODEL}: {download_model(WHISPER_MODEL)}", flush=True)
+    for model in WHISPER_MODELS:
+        print(f"Whisper {model}: {download_model(model)}", flush=True)
 
 
 if __name__ == "__main__":

@@ -41,3 +41,8 @@ terms:
     ar: "طاولة طعام"
   - en: "dining chairs"
     ar: "كراسي طعام"
+  # Trade terms it got wrong ("lead time" came out as "deadline").
+  - en: "lead time"
+    ar: "مدة التوريد"
+  - en: "freight"
+    ar: "الشحن"

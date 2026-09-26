@@ -237,7 +237,7 @@ async def _hardware_report() -> dict[str, Any]:
         from app.providers import tts_neural
 
         report["voices"] = {"provider": "neural", "spoken": dict(tts_neural.spoken), "last_error": tts_neural.last_error}
-    if _cfg.asr.provider == "faster_whisper":
+    if _cfg.asr.provider in ("faster_whisper", "cohere"):  # cohere reports through the same fields
         from app.providers import asr_faster_whisper
 
         report["speech_model"] = asr_faster_whisper.last_loaded
@@ -259,7 +259,7 @@ async def _hardware_report() -> dict[str, Any]:
 
 
 def _speech_on_gpu() -> bool:
-    if _cfg.asr.provider != "faster_whisper":
+    if _cfg.asr.provider not in ("faster_whisper", "cohere"):
         return False
     from app.providers import asr_faster_whisper
 
