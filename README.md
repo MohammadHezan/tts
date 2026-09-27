@@ -36,6 +36,10 @@ reach the card, they add `docker-compose.gpu.yml`:
 | Config | `deploy/config.docker-gpu.yaml` | `deploy/config.docker.yaml` |
 
 The status line at the top of the dashboard says which one is in use and why.
+Other programs using the card's memory (AutoCAD, SketchUp, video editors,
+games) can push part of the translation model onto the processor, several
+times slower; the dashboard says so, and closing them before sending a bot
+moves it back.
 Set `INTERPRETER_CPU=1` before starting to stay on the processor.
 
 Why these models (measured on an RTX 5070, September 2026):
@@ -85,8 +89,13 @@ One meeting, in `engine/app/`:
   on the processor), the translator
   (`providers/translator_ollama.py`, prompt in `prompts.py`) and the voice
   (`providers/tts_neural.py`) in order, in the background.
-- `meeting_chat.py`: people in the meeting can type `mute` / `unmute`
-  (or `اسكت` / `تكلم`) in the chat.
+- `meeting_chat.py`: anyone in the meeting can type in the chat:
+  `mute` / `unmute` (`اسكت` / `تكلم`) for the whole bot, or `mute arabic` /
+  `mute english` (`اسكت عربي` / `اسكت انجليزي`) to stop one language. The
+  meeting mixes the bot's voice for everyone, so no one can mute it for
+  themselves alone - but each side only needs its own language, so switching
+  off that language is how a side turns it off for itself. The dashboard has
+  the same buttons.
 
 ## Settings you might change
 

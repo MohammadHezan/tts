@@ -7,6 +7,11 @@ The meeting chat is what everyone in the call can reach, on a phone or a
 computer: typing "mute" (or "اسكت") there silences the bot, "unmute" (or
 "تكلم") brings it back, and the bot confirms in the chat. Same switch as the
 dashboard's and the app's mute button (BotControls).
+
+The meeting mixes the bot's voice for everyone, so no one can mute it for
+themselves alone. But each side only needs the translations into its own
+language: "mute arabic" / "اسكت عربي" stops the Arabic voice (the English
+side still hears theirs), "mute english" / "اسكت انجليزي" the English one.
 """
 
 from __future__ import annotations
@@ -26,12 +31,28 @@ MUTE_COMMANDS = frozenset({"mute", "mute interpreter", "interpreter mute", "اس
 UNMUTE_COMMANDS = frozenset(
     {"unmute", "unmute interpreter", "interpreter unmute", "تكلم", "الغاء الكتم", "إلغاء الكتم"}
 )
+_LANGUAGE_WORDS = {
+    "ar": {"arabic", "ar", "عربي", "العربي", "بالعربي", "العربية", "عربية"},
+    "en": {"english", "en", "انجليزي", "الانجليزي", "إنجليزي", "الإنجليزي", "بالانجليزي", "بالإنجليزي",
+           "انكليزي", "الانكليزي", "الإنجليزية", "الانجليزية"},
+}
+_MUTE_WORDS = {"mute", "off", "اسكت", "كتم", "بدون", "no", "stop", "silence"}
+_UNMUTE_WORDS = {"unmute", "on", "تكلم", "رجع", "ارجع", "الغاء كتم", "إلغاء كتم", "resume"}
 HELLO = (
-    "AI Interpreter is here. Type mute in this chat to silence it, unmute to hear it again. "
-    "اكتب اسكت لكتم المترجم، و تكلم لإعادة صوته."
+    "AI Interpreter is here. Type mute to silence it, unmute to hear it again - or mute arabic / "
+    "mute english to stop just one language. "
+    "اكتب اسكت لكتم المترجم و تكلم لإعادة صوته، أو اسكت عربي / اسكت انجليزي لكتم لغة واحدة."
 )
 MUTED = "Interpreter muted - it keeps listening but stays silent. Type unmute to hear it again. تم كتم المترجم."
 UNMUTED = "Interpreter unmuted - it speaks its translations again. عاد صوت المترجم."
+LANGUAGE_MUTED = {
+    "ar": "Arabic voice off - English translations continue. Type unmute arabic to bring it back. تم إيقاف الصوت العربي، اكتب تكلم عربي لإعادته.",
+    "en": "English voice off - Arabic translations continue. Type unmute english to bring it back. تم إيقاف الصوت الإنجليزي، اكتب تكلم انجليزي لإعادته.",
+}
+LANGUAGE_UNMUTED = {
+    "ar": "Arabic voice back on. عاد الصوت العربي.",
+    "en": "English voice back on. عاد الصوت الإنجليزي.",
+}
 
 POLL_S = 2.0
 STATE_EVERY_POLLS = 5  # check whether the bot is still in the meeting every ~10s
@@ -39,14 +60,39 @@ IN_MEETING = {"joined_not_recording", "joined_recording", "joined_recording_paus
 FINISHED = {"ended", "fatal_error"}
 
 
-def parse_command(text: str) -> bool | None:
-    """True = mute, False = unmute, None = not a command (a whole-message match only)."""
+def parse_command(text: str) -> tuple[bool, str | None] | None:
+    """(muted, language) - language None for the whole bot - or None if the
+    message isn't a command (a whole-message match only)."""
     normalized = normalize_text(text)
     if normalized in MUTE_COMMANDS:
-        return True
+        return True, None
     if normalized in UNMUTE_COMMANDS:
-        return False
+        return False, None
+    words = normalized.split()
+    if not 2 <= len(words) <= 3:
+        return None
+    for lang, names in _LANGUAGE_WORDS.items():
+        if words[-1] in names or words[0] in names:
+            rest = " ".join(w for w in words if w not in names)
+            if rest in _MUTE_WORDS:
+                return True, lang
+            if rest in _UNMUTE_WORDS:
+                return False, lang
     return None
+
+
+def apply_command(controls: BotControls, bot_id: str, command: tuple[bool, str | None]) -> str | None:
+    """Flips the switch; the chat announcement, or None if it was already so."""
+    muted, lang = command
+    if lang is None:
+        if controls.is_muted(bot_id) == muted:
+            return None
+        controls.set_muted(bot_id, muted)
+        return MUTED if muted else UNMUTED
+    if (lang in controls.muted_languages(bot_id)) == muted:
+        return None
+    controls.set_language_muted(bot_id, lang, muted)
+    return LANGUAGE_MUTED[lang] if muted else LANGUAGE_UNMUTED[lang]
 
 
 def _default_client() -> AttendeeClient | None:
@@ -111,14 +157,16 @@ async def watch_chat(
                             continue
                         seen.add(message.get("id"))
                         command = parse_command(message.get("text") or "")
-                        if command is None or command == controls.is_muted(bot_id):
+                        if command is None:
                             continue
-                        controls.set_muted(bot_id, command)
+                        reply = apply_command(controls, bot_id, command)
+                        if reply is None:
+                            continue
                         log_event(
-                            logger, logging.INFO, "attendee_bot_muted" if command else "attendee_bot_unmuted",
-                            bot_id=bot_id, via="meeting_chat", by=message.get("sender_name"),
+                            logger, logging.INFO, "attendee_bot_muted" if command[0] else "attendee_bot_unmuted",
+                            bot_id=bot_id, language=command[1] or "all", via="meeting_chat", by=message.get("sender_name"),
                         )
-                        await announce(bot_id, MUTED if command else UNMUTED, client)
+                        await announce(bot_id, reply, client)
                     next_url = page.get("next")
                     cursor = parse_qs(urlparse(next_url).query).get("cursor", [None])[0] if next_url else None
                     if not cursor:

@@ -9,6 +9,10 @@ const botNameInput = document.getElementById('bot-name');
 const sendBtn = document.getElementById('send-bot');
 const removeBtn = document.getElementById('remove-bot');
 const muteBtn = document.getElementById('mute-bot');
+// One language at a time: the meeting mixes the bot's voice for everyone, so
+// each side turns off the language it doesn't need (the other still hears theirs).
+const languageBtns = [document.getElementById('mute-ar'), document.getElementById('mute-en')];
+const LANGUAGE_NAMES = { ar: 'Arabic', en: 'English' };
 const statusEl = document.getElementById('status');
 const hintEl = document.getElementById('bot-hint');
 const warningsEl = document.getElementById('warnings');
@@ -30,6 +34,7 @@ const STATE_HINTS = {
 
 let botId = null;
 let botMuted = false;
+let mutedLanguages = [];
 let hintedState = null;
 let eventsSocket = null;
 let pollTimer = null;
@@ -52,10 +57,15 @@ function recall() {
   }
 }
 
-function showMuted(muted) {
+function showMuted(muted, languages = []) {
   botMuted = muted;
+  mutedLanguages = languages;
   // Muted: the bot stops speaking in the meeting; its captions keep coming here.
   muteBtn.textContent = muted ? 'Unmute interpreter' : 'Mute interpreter';
+  for (const btn of languageBtns) {
+    const off = languages.includes(btn.dataset.lang);
+    btn.textContent = `${LANGUAGE_NAMES[btn.dataset.lang]} voice: ${off ? 'off' : 'on'}`;
+  }
 }
 
 function setStatus(text, kind) {
@@ -100,7 +110,7 @@ function describeHardware(config) {
     let translation = '';
     if (hw.translation_on_gpu === false) translation = ' Translation is on the processor, though.';
     else if (hw.translation_gpu_share != null && hw.translation_gpu_share < 0.95) {
-      translation = ` Only ${Math.round(hw.translation_gpu_share * 100)}% of the translation model fits in video memory; the rest runs on the processor (slower). Close other programs using the graphics card, then Stop and Start.`;
+      translation = ` But only ${Math.round(hw.translation_gpu_share * 100)}% of the translation model fits on it - other programs are using its memory (AutoCAD, SketchUp, CapCut, games...), so translations are several times slower. Close them: the next bot you send moves the model fully onto the graphics card.`;
     }
     return `Running on the graphics card${speech}.${translation}`;
   }
@@ -127,8 +137,9 @@ async function loadConfig() {
   readinessEl.classList.toggle('ready', config.attendee_ready);
   if (config.attendee_ready) {
     readinessEl.textContent = 'Ready. Paste a meeting link and send the interpreter in. ' + describeHardware(config);
-    // Whisper still loading (it tells for sure whether the graphics card works) - look again shortly.
-    if (config.hardware && config.hardware.speech_model === null) setTimeout(loadConfig, 5000);
+    // Speech model still loading: look again shortly. Otherwise keep the line
+    // current (the translation model loads, or gets squeezed off the card).
+    setTimeout(loadConfig, config.hardware && config.hardware.speech_model === null ? 5000 : 15000);
   } else {
     // Usually the bundled meeting service still starting - check again shortly.
     readinessEl.textContent = config.attendee_problem || 'The meeting service is not ready yet.';
@@ -209,7 +220,15 @@ async function pollState() {
   try {
     const bot = await api('GET', `/api/bots/${encodeURIComponent(botId)}`);
     const state = bot.state || 'unknown';
-    showMuted(Boolean(bot.muted));
+    if (bot.stale) {
+      // Its worker died with a restart - it can't hear anything. Let go of it
+      // so a new one can be sent.
+      stopTracking();
+      setStatus('Bot: disconnected', 'disconnected');
+      hintEl.textContent = bot.problem;
+      return;
+    }
+    showMuted(Boolean(bot.muted), bot.muted_languages || []);
     setStatus(`Bot: ${state}${bot.muted ? ' (muted)' : ''}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
     if (state !== hintedState && STATE_HINTS[state]) {
       hintEl.textContent = [STATE_HINTS[state], bot.problem].filter(Boolean).join(' ');
@@ -228,6 +247,7 @@ function track(id) {
   remember(id);
   removeBtn.hidden = false;
   muteBtn.hidden = false;
+  for (const btn of languageBtns) btn.hidden = false;
   sendBtn.disabled = true;
   openEvents(id);
   pollState();
@@ -242,6 +262,7 @@ function stopTracking() {
   remember(null);
   removeBtn.hidden = true;
   muteBtn.hidden = true;
+  for (const btn of languageBtns) btn.hidden = true;
   showMuted(false);
   sendBtn.disabled = !meetingServiceReady;
 }
@@ -273,7 +294,7 @@ muteBtn.addEventListener('click', async () => {
   if (!botId) return;
   try {
     const result = await api('POST', `/api/bots/${encodeURIComponent(botId)}/mute`, { muted: !botMuted });
-    showMuted(result.muted);
+    showMuted(result.muted, result.muted_languages || []);
     hintEl.textContent = result.muted
       ? 'Muted: the interpreter stays in the meeting but stops speaking. Translations still appear here. Anyone in the call can type "unmute" in the meeting chat to bring it back.'
       : 'Unmuted: the interpreter speaks its translations in the meeting again. Anyone in the call can type "mute" in the meeting chat to silence it.';
@@ -281,6 +302,24 @@ muteBtn.addEventListener('click', async () => {
     hintEl.textContent = err.message;
   }
 });
+
+for (const btn of languageBtns) {
+  btn.addEventListener('click', async () => {
+    if (!botId) return;
+    const lang = btn.dataset.lang;
+    const muted = !mutedLanguages.includes(lang);
+    try {
+      const result = await api('POST', `/api/bots/${encodeURIComponent(botId)}/mute`, { muted, language: lang });
+      showMuted(result.muted, result.muted_languages || []);
+      const other = LANGUAGE_NAMES[lang === 'ar' ? 'en' : 'ar'];
+      hintEl.textContent = muted
+        ? `${LANGUAGE_NAMES[lang]} voice off: the interpreter stops speaking ${LANGUAGE_NAMES[lang]} but keeps speaking ${other}. In the meeting chat anyone can type "unmute ${LANGUAGE_NAMES[lang].toLowerCase()}".`
+        : `${LANGUAGE_NAMES[lang]} voice back on.`;
+    } catch (err) {
+      hintEl.textContent = err.message;
+    }
+  });
+}
 
 removeBtn.addEventListener('click', async () => {
   if (!botId) return;

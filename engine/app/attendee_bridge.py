@@ -104,10 +104,18 @@ class BotEventHub:
 
 
 class BotControls:
-    """Per-bot switches the dashboard and the phone flip mid-meeting."""
+    """Per-bot switches the dashboard, the phone and the meeting chat flip
+    mid-meeting, and when each bot's audio was last heard."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._muted: set[str] = set()
+        # Languages the bot doesn't speak for now. The meeting mixes the bot's
+        # voice for everyone, so nobody can mute it for themselves alone - but
+        # each side only needs the translations into its own language, so
+        # silencing one language is how one side turns it off for itself.
+        self._silent_languages: dict[str, set[str]] = defaultdict(set)
+        self._heard: dict[str, float] = {}
+        self._clock = clock
 
     def set_muted(self, bot_id: str, muted: bool) -> None:
         if muted:
@@ -117,6 +125,26 @@ class BotControls:
 
     def is_muted(self, bot_id: str) -> bool:
         return bot_id in self._muted
+
+    def set_language_muted(self, bot_id: str, lang: str, muted: bool) -> None:
+        if muted:
+            self._silent_languages[bot_id].add(lang)
+        else:
+            self._silent_languages[bot_id].discard(lang)
+
+    def muted_languages(self, bot_id: str) -> set[str]:
+        return set(self._silent_languages.get(bot_id, ()))
+
+    def speaks(self, bot_id: str, lang: str) -> bool:
+        return bot_id not in self._muted and lang not in self._silent_languages.get(bot_id, ())
+
+    def heard_from(self, bot_id: str) -> None:
+        self._heard[bot_id] = self._clock()
+
+    def seconds_since_heard(self, bot_id: str) -> float | None:
+        """None if this bot's audio hasn't reached this server since it started."""
+        heard = self._heard.get(bot_id)
+        return None if heard is None else self._clock() - heard
 
 
 class EchoGuard:
@@ -192,7 +220,7 @@ async def run_bridge(
 
     pipeline = pipeline_factory(
         accept_transcript=accept_transcript,
-        should_speak=lambda: not controls.is_muted(bot_id),
+        should_speak=lambda lang: controls.speaks(bot_id, lang),
         background=True,
     )
     frames: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -244,6 +272,7 @@ async def run_bridge(
             if message.get("trigger") != "realtime_audio.mixed":
                 continue
             bot_id = message.get("bot_id", bot_id)
+            controls.heard_from(bot_id)
             data = message["data"]
             chunk = resample(
                 base64.b64decode(data["chunk"]), data.get("sample_rate", ATTENDEE_SAMPLE_RATE), pipeline_sample_rate

@@ -29,8 +29,9 @@ import logging
 import os
 import secrets
 import threading
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -41,7 +42,7 @@ from app.attendee_bridge import ATTENDEE_SAMPLE_RATE, BotControls, BotEventHub, 
 from app.attendee_client import AttendeeClient, AttendeeError, AttendeeSettings
 from app.config import load_config
 from app.logging_utils import configure_logging, get_logger, log_event
-from app.meeting_chat import MUTED, UNMUTED, announce, watch_chat
+from app.meeting_chat import IN_MEETING, announce, apply_command, watch_chat
 from app.pipeline import Pipeline
 from app.providers.base import build_asr_provider, build_translator_provider, build_tts_provider
 
@@ -96,6 +97,11 @@ _tts = build_tts_provider(_cfg.tts)  # None when tts.provider: none - captions o
 _BRIDGE_TOKEN = os.environ.get("ATTENDEE_BRIDGE_TOKEN") or secrets.token_urlsafe(24)
 _bot_hub = BotEventHub()
 _bot_controls = BotControls()
+_STARTED = time.monotonic()
+# A bot Attendee still calls "in the meeting" whose audio hasn't reached us in
+# this long is gone (its worker died with a restart of the computer or Docker).
+STALE_AFTER_START_S = 90
+STALE_SILENCE_S = 600
 
 app = FastAPI(title="Arabic<->English Speech Translation Engine")
 
@@ -107,6 +113,9 @@ class CreateBotRequest(BaseModel):
 
 class MuteRequest(BaseModel):
     muted: bool
+    # None: the whole bot. "ar"/"en": only its voice in that language - how
+    # one side of the call turns it off for itself (see meeting_chat.py).
+    language: Literal["ar", "en"] | None = None
 
 
 def _attendee_client() -> AttendeeClient:
@@ -321,28 +330,61 @@ def _bot_problem(bot: dict[str, Any]) -> str | None:
     return None
 
 
+def _is_stale(bot: dict[str, Any]) -> bool:
+    if bot.get("state") not in IN_MEETING | {"leaving"}:
+        return False
+    since = _bot_controls.seconds_since_heard(bot["id"])
+    if since is None:
+        return time.monotonic() - _STARTED > STALE_AFTER_START_S
+    return since > STALE_SILENCE_S
+
+
 @app.get("/api/bots/{bot_id}")
 async def get_bot(bot_id: str) -> dict[str, Any]:
     bot = await _call_attendee(lambda client: client.get_bot(bot_id))
     bot["problem"] = _bot_problem(bot)
+    bot["stale"] = _is_stale(bot)
+    if bot["stale"]:
+        bot["problem"] = (
+            "This bot lost its connection to the interpreter (the computer or Docker restarted), "
+            "so it can't hear the meeting. Send a new one."
+        )
     bot["muted"] = _bot_controls.is_muted(bot_id)
+    bot["muted_languages"] = sorted(_bot_controls.muted_languages(bot_id))
     return bot
 
 
 @app.post("/api/bots/{bot_id}/mute")
 async def mute_bot(bot_id: str, body: MuteRequest) -> dict[str, Any]:
-    """Stops (or restarts) the bot's voice in the meeting; its captions keep going."""
-    changed = _bot_controls.is_muted(bot_id) != body.muted
-    _bot_controls.set_muted(bot_id, body.muted)
-    log_event(_logger, logging.INFO, "attendee_bot_muted" if body.muted else "attendee_bot_unmuted", bot_id=bot_id)
-    if changed:  # so everyone in the call knows why it went quiet, and how to undo it
-        _in_background(announce(bot_id, MUTED if body.muted else UNMUTED))
-    return {"id": bot_id, "muted": body.muted}
+    """Stops (or restarts) the bot's voice in the meeting - all of it, or one
+    language; its captions keep going."""
+    announcement = apply_command(_bot_controls, bot_id, (body.muted, body.language))
+    log_event(
+        _logger, logging.INFO, "attendee_bot_muted" if body.muted else "attendee_bot_unmuted",
+        bot_id=bot_id, language=body.language or "all",
+    )
+    if announcement:  # so everyone in the call knows why it went quiet, and how to undo it
+        _in_background(announce(bot_id, announcement))
+    return {
+        "id": bot_id,
+        "muted": _bot_controls.is_muted(bot_id),
+        "muted_languages": sorted(_bot_controls.muted_languages(bot_id)),
+    }
 
 
 @app.post("/api/bots/{bot_id}/leave")
 async def leave_bot(bot_id: str) -> dict[str, Any]:
-    return await _call_attendee(lambda client: client.leave_bot(bot_id))
+    async def leave(client: AttendeeClient) -> dict[str, Any]:
+        try:
+            return await client.leave_bot(bot_id)
+        except AttendeeError as error:
+            # Already leaving or gone (a second click, or a bot whose worker
+            # died): that's what was asked for, not an error.
+            if error.status_code == 400 and "not allowed when bot is in state" in error.detail:
+                return await client.get_bot(bot_id)
+            raise
+
+    return await _call_attendee(leave)
 
 
 @app.websocket("/api/bots/{bot_id}/events")
@@ -396,7 +438,28 @@ async def attendee_bridge(ws: WebSocket) -> None:
         _keep_spare_asr(asr)
 
 
+async def _refit_translation_model() -> None:
+    """Ollama splits a model between video memory and the processor when it
+    loads it, by what's free then - and keeps that split. If other programs
+    (AutoCAD, SketchUp, a video editor, a game) had the card's memory then,
+    most of the model runs on the processor, several times slower. Unloading
+    it here makes the warm-up below load it again into what's free now."""
+    if _cfg.translator.provider != "ollama":
+        return
+    model = _cfg.translator.ollama.model
+    try:
+        async with httpx.AsyncClient(base_url=_cfg.translator.ollama.base_url, timeout=10.0) as client:
+            loaded = (await client.get("/api/ps")).json().get("models") or []
+            entry = next((m for m in loaded if model in (m.get("name"), m.get("model"))), None)
+            if entry and entry.get("size") and (entry.get("size_vram") or 0) < 0.95 * entry["size"]:
+                log_event(_logger, logging.INFO, "translation_model_refit", gpu_share=round((entry.get("size_vram") or 0) / entry["size"], 2))
+                await client.post("/api/generate", json={"model": model, "keep_alive": 0})
+    except (httpx.HTTPError, ValueError) as error:
+        log_event(_logger, logging.WARNING, "translation_model_refit_failed", error=repr(error))
+
+
 async def _warm_up_translator() -> None:
+    await _refit_translation_model()
     try:
         await _translator.translate("Hello.", _cfg.translator.source_lang, _cfg.translator.target_lang)
     except Exception as error:  # the real first sentence will surface a persistent failure

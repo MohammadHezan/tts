@@ -70,13 +70,14 @@ class Pipeline:
         tts: TtsProvider | None = None,
         emit_partials: bool = True,
         accept_transcript: Callable[[str, str], bool] | None = None,
-        should_speak: Callable[[], bool] | None = None,
+        should_speak: Callable[[str], bool] | None = None,
         background: bool = False,
     ) -> None:
         self._cfg = cfg
         # accept_transcript(text, lang): False drops the utterance as if it were
         # silence (the meeting bridge uses it to ignore its own voice coming
-        # back). should_speak(): False skips TTS for now (the bot is muted).
+        # back). should_speak(lang): False skips TTS into that language for now (the bot
+        # or that language is muted).
         self._accept_transcript = accept_transcript
         self._should_speak = should_speak
         # Partials only feed live captions. A meeting bot never shows them, and
@@ -289,7 +290,7 @@ class Pipeline:
                 continue  # nothing left to say once the model's remarks are removed
             translated_sentences.append(translated)
             yield self._event(turn, EventType.TRANSLATION, target_lang, translated, is_final_segment=True)
-            if self._tts is not None and (self._should_speak is None or self._should_speak()):
+            if self._tts is not None and (self._should_speak is None or self._should_speak(target_lang)):
                 yield asyncio.create_task(self._speak(turn, translated, target_lang, i))
 
         if translated_sentences:
