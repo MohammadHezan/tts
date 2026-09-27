@@ -159,7 +159,7 @@ class NeuralTtsConfig(BaseModel):
     edge-tts: no account or key, needs internet. The local voices (kokoro,
     piper above) take over for any sentence they can't deliver."""
 
-    voices: dict[str, str] = Field(default_factory=lambda: {"en": "en-US-AndrewNeural", "ar": "ar-JO-TaimNeural"})
+    voices: dict[str, str] = Field(default_factory=lambda: {"en": "en-US-AndrewNeural", "ar": "ar-LB-RamiNeural"})
     # Speaking rate per language, relative to the voice's own. At "+0%" they
     # measured ~200 words/min (English) and ~150 (Arabic) in the meeting
     # simulation - brisk for a call; these bring both to a conversational pace.

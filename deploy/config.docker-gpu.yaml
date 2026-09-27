@@ -96,7 +96,7 @@ tts:
   neural:
     voices:
       en: en-US-AndrewNeural
-      ar: ar-JO-TaimNeural
+      ar: ar-LB-RamiNeural # Levantine; clear (0% errors read back), Jordanian Taim sounded Egyptian to users, Syrian voices were less clear
     rates: # relative to the voice's own pace: "-10%" slower, "+10%" faster
       en: "-10%"
       ar: "-5%"

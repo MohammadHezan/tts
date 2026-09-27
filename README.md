@@ -119,7 +119,7 @@ Speech recognition on a graphics card:
 of Use) or Llama 3.1 (Llama 3.1 Community License), run by Ollama.
 
 
-The bot speaks with Microsoft's neural voices (`ar-JO-TaimNeural`,
+The bot speaks with Microsoft's neural voices (`ar-LB-RamiNeural`, Lebanese,
 `en-US-AndrewNeural`) through [edge-tts](https://github.com/rany2/edge-tts)
 (LGPL-3.0). They need internet but no key. It is Edge's read-aloud service,
 not a supported Microsoft API; the supported route to the same voices is
