@@ -38,21 +38,11 @@ _LANGUAGE_WORDS = {
 }
 _MUTE_WORDS = {"mute", "off", "اسكت", "كتم", "بدون", "no", "stop", "silence"}
 _UNMUTE_WORDS = {"unmute", "on", "تكلم", "رجع", "ارجع", "الغاء كتم", "إلغاء كتم", "resume"}
-HELLO = (
-    "AI Interpreter is here. Type mute to silence it, unmute to hear it again - or mute arabic / "
-    "mute english to stop just one language. "
-    "اكتب اسكت لكتم المترجم و تكلم لإعادة صوته، أو اسكت عربي / اسكت انجليزي لكتم لغة واحدة."
-)
-MUTED = "Interpreter muted - it keeps listening but stays silent. Type unmute to hear it again. تم كتم المترجم."
-UNMUTED = "Interpreter unmuted - it speaks its translations again. عاد صوت المترجم."
-LANGUAGE_MUTED = {
-    "ar": "Arabic voice off - English translations continue. Type unmute arabic to bring it back. تم إيقاف الصوت العربي، اكتب تكلم عربي لإعادته.",
-    "en": "English voice off - Arabic translations continue. Type unmute english to bring it back. تم إيقاف الصوت الإنجليزي، اكتب تكلم انجليزي لإعادته.",
-}
-LANGUAGE_UNMUTED = {
-    "ar": "Arabic voice back on. عاد الصوت العربي.",
-    "en": "English voice back on. عاد الصوت الإنجليزي.",
-}
+HELLO = "Interpreter here. Type: mute / unmute, mute arabic / mute english. اكتب: اسكت / تكلم، اسكت عربي / اسكت انجليزي"
+MUTED = "Muted. تم الكتم"
+UNMUTED = "Unmuted. عاد الصوت"
+LANGUAGE_MUTED = {"ar": "Arabic off. تم إيقاف العربي", "en": "English off. تم إيقاف الإنجليزي"}
+LANGUAGE_UNMUTED = {"ar": "Arabic on. عاد العربي", "en": "English on. عاد الإنجليزي"}
 
 POLL_S = 2.0
 STATE_EVERY_POLLS = 5  # check whether the bot is still in the meeting every ~10s
