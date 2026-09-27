@@ -98,8 +98,8 @@ tts:
       en: en-US-AndrewNeural
       ar: ar-JO-TaimNeural
     rates: # relative to the voice's own pace: "-10%" slower, "+10%" faster
-      en: "-5%"
-      ar: "+0%"
+      en: "-10%"
+      ar: "-5%"
     timeout_s: 6.0
   kokoro:
     model_path: /models/kokoro-v1.0.onnx

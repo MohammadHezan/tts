@@ -47,6 +47,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from difflib import SequenceMatcher
 
+import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.logging_utils import get_logger, log_event
@@ -54,7 +55,17 @@ from app.pipeline import Pipeline
 from app.schema import EventType, PipelineEvent
 from app.text_normalize import normalize_text
 
-ATTENDEE_SAMPLE_RATE = 16000
+ATTENDEE_SAMPLE_RATE = 16000  # the meeting audio we receive
+# The bot's voice goes out at the neural voices' own rate, so it isn't
+# resampled at all (going down to 16 kHz without a filter folded the "s"
+# sounds into a harsh hiss). Attendee repeats each sample to reach the
+# meeting's 48 kHz (1.79.2, realtime_audio_output_manager.py) - from 24 kHz
+# its side effects land higher, where they're far less audible. (Sending 48 kHz
+# would skip that, but Attendee 1.79.2 mishandles an already-matching rate.)
+OUTPUT_SAMPLE_RATE = 24000
+# Softer "s": flat to 4 kHz, gently down to -6 dB at 7 kHz, gone by 8.5 kHz
+# - so what Attendee's sample repeating mirrors upwards lands above ~15.5 kHz.
+DEESS_POINTS_HZ_DB = ((0, 0.0), (4000, 0.0), (5500, -3.0), (7000, -6.0), (7800, -9.0), (8500, -40.0))
 OUTPUT_CHUNK_MS = 100
 # How long after the bot's last sound the meeting audio stays ignored: the
 # round trip of its voice through the call to someone's speaker and back in
@@ -173,17 +184,38 @@ def resample(pcm16: bytes, src_rate: int, dst_rate: int) -> bytes:
     return converted
 
 
+def voice_for_meeting(pcm16: bytes, sample_rate: int) -> bytes:
+    """One whole TTS clip, de-essed and at OUTPUT_SAMPLE_RATE - both done in
+    the frequency domain, so any source rate (Piper's 22050) is resampled
+    cleanly too."""
+    samples = np.frombuffer(pcm16, dtype=np.int16).astype(np.float64)
+    if len(samples) < 2:
+        return pcm16
+    spectrum = np.fft.rfft(samples)
+    freqs = np.fft.rfftfreq(len(samples), 1.0 / sample_rate)
+    points_hz, points_db = zip(*DEESS_POINTS_HZ_DB)
+    spectrum *= 10 ** (np.interp(freqs, points_hz, points_db, right=-120.0) / 20)
+    n_out = round(len(samples) * OUTPUT_SAMPLE_RATE / sample_rate)
+    if n_out != len(samples):
+        resized = np.zeros(n_out // 2 + 1, dtype=complex)
+        keep = min(len(resized), len(spectrum))
+        resized[:keep] = spectrum[:keep]
+        spectrum = resized * (n_out / len(samples))
+    out = np.fft.irfft(spectrum, n_out)
+    return np.clip(np.round(out), -32768, 32767).astype(np.int16).tobytes()
+
+
 def bot_output_messages(pcm16: bytes, sample_rate: int) -> list[str]:
     """Split one TTS clip into Attendee bot_output messages of OUTPUT_CHUNK_MS each."""
-    audio = resample(pcm16, sample_rate, ATTENDEE_SAMPLE_RATE)
-    chunk_bytes = ATTENDEE_SAMPLE_RATE * OUTPUT_CHUNK_MS // 1000 * 2
+    audio = voice_for_meeting(pcm16, sample_rate)
+    chunk_bytes = OUTPUT_SAMPLE_RATE * OUTPUT_CHUNK_MS // 1000 * 2
     return [
         json.dumps(
             {
                 "trigger": "realtime_audio.bot_output",
                 "data": {
                     "chunk": base64.b64encode(audio[offset : offset + chunk_bytes]).decode("ascii"),
-                    "sample_rate": ATTENDEE_SAMPLE_RATE,
+                    "sample_rate": OUTPUT_SAMPLE_RATE,
                 },
             }
         )
@@ -240,7 +272,7 @@ async def run_bridge(
     def handle(event: PipelineEvent) -> None:
         if event.type is EventType.AUDIO and event.audio:
             echoes.said(event.text, event.lang)
-            for message in bot_output_messages(event.audio, event.audio_sample_rate or ATTENDEE_SAMPLE_RATE):
+            for message in bot_output_messages(event.audio, event.audio_sample_rate or OUTPUT_SAMPLE_RATE):
                 outgoing.put_nowait(message)
         elif event.type in CAPTION_EVENT_TYPES:
             hub.publish(bot_id, event.model_dump_json(exclude={"audio"}))
