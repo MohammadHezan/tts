@@ -16,3 +16,8 @@ models/
 *.pt
 *.bin
 *.onnx
+
+# Test outputs
+results/
+asr_test_clips/
+tts_clips/
