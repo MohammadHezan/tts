@@ -1,7 +1,7 @@
 """Local translator provider backed by an Ollama server (default; no API key).
 
 Ollama must be running locally with the configured model pulled, e.g.:
-    ollama pull llama3.1:8b-instruct-q4_K_M
+    ollama pull hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ class OllamaTranslator(TranslatorProvider):
         target_lang: str,
         context: list[TurnContext] | None = None,
     ) -> str:
-        system_prompt = build_system_prompt(self._cfg.domain_prompt, self._glossary)
+        system_prompt = build_system_prompt(self._cfg.domain_prompt)
         messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(build_messages(text, source_lang, target_lang, context))
+        messages.extend(build_messages(text, source_lang, target_lang, context, self._glossary))
 
         # Deterministic: a live interpreter should say the same thing for the
         # same sentence, not a creative variation of it.

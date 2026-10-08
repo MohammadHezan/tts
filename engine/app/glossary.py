@@ -47,6 +47,23 @@ class Glossary:
     def terms(self) -> list[GlossaryTerm]:
         return list(self._terms)
 
+    def relevant_terms(self, text: str) -> list[GlossaryTerm]:
+        """The terms whose English or Arabic side occurs in `text` (case-insensitive)."""
+        low = text.lower()
+        return [t for t in self._terms if t.en.lower() in low or t.ar in text]
+
+    def format_hint(self, text: str) -> str:
+        """One short line naming just the terms this message uses, or "".
+
+        The whole glossary in the system prompt cost ~400 prompt tokens on every
+        sentence and made small models recite it instead of translating (a
+        4B model answered "Great job team" with the list's first entries).
+        """
+        terms = self.relevant_terms(text)
+        if not terms:
+            return ""
+        return "; ".join(f'"{t.en}" = "{t.ar}"' for t in terms)
+
     def format_for_prompt(self) -> str:
         """Renders the glossary as a system-prompt block covering both directions
         (the same text whichever way a turn is translated - see app/prompts.py),

@@ -154,10 +154,10 @@ Say 'Getting the interpreter ready. The first time this downloads about 15 GB.'
 & docker compose up -d
 if ($LASTEXITCODE -ne 0) { Say 'Starting failed - see the messages above.'; exit 1 }
 
-$models = 'the 4.9 GB translation model'
+$models = 'the 2.5 GB translation model'
 $pulls = @('setup', 'attendee-setup', 'ollama-pull')
-if ($useGpu) {  # docker-compose.gpu.yml: Gemma 3 12B, and the speech model
-    $models = 'the 7.4 GB translation model and the 4 GB speech model'
+if ($useGpu) {  # docker-compose.gpu.yml: Gemma 3 4B, and the speech model
+    $models = 'the 2.5 GB translation model and the 4 GB speech model'
     $pulls += 'asr-pull'
 }
 Say "Starting up (the first start also downloads $models)..."

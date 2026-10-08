@@ -22,21 +22,12 @@ vad:
   speech_pad_ms: 200 # padding kept around detected speech edges
 
 asr:
-  provider: faster_whisper
-  # Spec-recommended target model. Needs an NVIDIA GPU (~6GB VRAM, fp16) to
-  # reliably beat the <=2s partial-caption budget. See README "Hardware" section
-  # for the CPU fallback (model: small.en / base.en, compute_type: int8).
-  model: large-v3-turbo
-  device: auto # auto | cuda | cpu
-  compute_type: auto # auto -> float16 on GPU, int8 on CPU
-  language: auto # auto-detect ar/en - this is what makes the pipeline bidirectional
-  candidate_languages: [en, ar] # auto-detect picks between these two only
-  glossary_path: glossary.yaml # its terms become Whisper hint words ("walnut", not "wall at")
-  beam_size: 1 # greedy decoding for latency; raise for offline WER benchmarking
-  local_agreement:
-    enabled: true
-    chunk_ms: 500 # re-decode cadence while an utterance is still open
-    agreement_window: 2 # consecutive hypotheses that must share a prefix to confirm it
+  provider: cohere
+  cohere:
+    model: /path/to/cohere-transcribe-03-2026
+    processor: null
+    trust_remote_code: true
+    quantize: none
 
 translator:
   provider: ollama # ollama (local, default) | claude (cloud)
@@ -49,12 +40,8 @@ translator:
   glossary_path: glossary.yaml # repo-root-relative; null disables
   ollama:
     base_url: http://localhost:11434
-    model: llama3.1:8b-instruct-q4_K_M
+    model: hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M  # Gemma 3 4B, text-only (see deploy/config.docker-gpu.yaml)
     timeout_s: 15
-  claude:
-    model: claude-haiku-4-5-20251001 # low-latency Claude model for turn-by-turn translation
-    timeout_s: 15
-    max_tokens: 512
 
 tts:
   # "none" ships safe-by-default (no model downloads required to run captions-only).

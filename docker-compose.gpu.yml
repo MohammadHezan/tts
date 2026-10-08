@@ -7,9 +7,8 @@
 #
 # Speech recognition is Cohere Transcribe Arabic (a dialect fine-tune, ~4GB,
 # downloaded once by asr-pull) - far better at Jordanian Arabic than any
-# Whisper - and the translation model - Gemma 3 12B here, better Arabic
-# than the CPU's Llama 3.1 8B, ~7GB more to download once - answers in about a
-# second instead of several. Needs a current NVIDIA driver plus GPU support in Docker: on
+# Whisper - and the translation model - Gemma 3 4B here (the CPU
+# stack uses the same model), answers in a fraction of a second on the card. On a processor Ollama can't reuse its prompt cache for Gemma 3, so each sentence re-reads the prompt first (~12 s on 4 cores). Needs a current NVIDIA driver plus GPU support in Docker: on
 # Windows, Docker Desktop with the WSL 2 backend; on Linux, the NVIDIA Container
 # Toolkit. Set INTERPRETER_CPU=1 before starting to stay on the CPU anyway.
 x-gpu: &gpu
@@ -42,6 +41,7 @@ services:
     image: ghcr.io/mohammadhezan/interpreter-translator:gpu
     environment:
       ENGINE_CONFIG_PATH: /srv/tts/deploy/config.docker-gpu.yaml
+      HF_TOKEN: ${HF_TOKEN:-} # only for gated speech models (CohereLabs/cohere-transcribe-03-2026)
     command: ["python", "/srv/tts/deploy/download_asr.py"]
     volumes:
       - interpreter-asr:/models/asr
@@ -51,12 +51,12 @@ services:
     <<: *gpu
     environment:
       # Halve the memory for the model's context (flash attention, 8-bit
-      # cache), so Gemma 3 12B and Whisper both fit a 12GB card.
+      # cache), so Gemma 3 4B and the speech model fit a 12GB card with room to spare.
       OLLAMA_FLASH_ATTENTION: "1"
       OLLAMA_KV_CACHE_TYPE: q8_0
 
   ollama-pull:
-    entrypoint: ["ollama", "pull", "hf.co/unsloth/gemma-3-12b-it-GGUF:IQ4_XS"]
+    entrypoint: ["ollama", "pull", "hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M"]
 
 volumes:
   interpreter-asr:

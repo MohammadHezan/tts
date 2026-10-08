@@ -45,16 +45,24 @@ def looks_like_a_loop(text: str) -> bool:
 class CohereAsr(AsrProvider):
     def __init__(self, cfg: AsrConfig, sample_rate: int = 16000) -> None:
         import torch
-        from transformers import AutoProcessor, CohereAsrForConditionalGeneration
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, CohereAsrForConditionalGeneration
 
         c = cfg.cohere
         self._cfg = cfg
         self._sample_rate = sample_rate
         self._torch = torch
-        self._processor = AutoProcessor.from_pretrained(c.processor, revision=c.processor_revision, cache_dir=c.cache_dir)
-        model = CohereAsrForConditionalGeneration.from_pretrained(
+        self._processor = AutoProcessor.from_pretrained(
+            c.processor or c.model,
+            revision=c.processor_revision if c.processor else c.revision,
+            cache_dir=c.cache_dir,
+            trust_remote_code=c.trust_remote_code,
+        )
+        # Model class: the repo's own code (trust_remote_code) or the built-in one.
+        model_class = AutoModelForSpeechSeq2Seq if c.trust_remote_code else CohereAsrForConditionalGeneration
+        model = model_class.from_pretrained(
             c.model, revision=c.revision, cache_dir=c.cache_dir, dtype=torch.bfloat16,
-            device_map="cpu" if c.quantize == "int8" else "cuda",
+            trust_remote_code=c.trust_remote_code,
+            device_map="cpu" if c.quantize == "int8" else ("auto" if c.trust_remote_code else "cuda"),
         )
         if c.quantize == "int8":
             # Weights in 8 bits: half the video memory (2.4GB instead of 4.3GB,
@@ -68,7 +76,7 @@ class CohereAsr(AsrProvider):
         self._model = model.eval()
         # Loads the CUDA kernels now rather than in the meeting's first sentence.
         self._final_text(np.zeros(sample_rate, dtype=np.float32))
-        asr_faster_whisper.last_loaded = f"{c.model.split('/')[-1]} ({c.quantize}) on cuda"
+        asr_faster_whisper.last_loaded = f"{c.model.rstrip('/').split('/')[-1]} ({c.quantize}) on {self._model.device}"
 
     def start_utterance(self, turn_id: str) -> None:
         pass

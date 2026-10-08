@@ -32,7 +32,7 @@ reach the card, they add `docker-compose.gpu.yml`:
 | | Graphics card | Processor |
 |---|---|---|
 | Speech recognition | Cohere Transcribe Arabic, dialect fine-tune (8-bit) | Whisper small (int8) |
-| Translation | Gemma 3 12B (IQ4_XS) | Llama 3.1 8B |
+| Translation | Gemma 3 4B (Q4_K_M) | Gemma 3 4B (Q4_K_M) |
 | Config | `deploy/config.docker-gpu.yaml` | `deploy/config.docker.yaml` |
 
 The status line at the top of the dashboard says which one is in use and why.
@@ -115,8 +115,9 @@ Speech recognition on a graphics card:
 [Cohere Transcribe Arabic](https://huggingface.co/CohereLabs/cohere-transcribe-arabic-07-2026)
 (Apache-2.0), as the community dialect fine-tune
 [oddadmix/cohere-transcribe-arabic-07-2026-dialectal-v2](https://huggingface.co/oddadmix/cohere-transcribe-arabic-07-2026-dialectal-v2)
-(Apache-2.0), pinned to the tested revision. Translation: Gemma 3 (Gemma Terms
-of Use) or Llama 3.1 (Llama 3.1 Community License), run by Ollama.
+(Apache-2.0), pinned to the tested revision. Translation: Gemma 3 4B, text-only build
+[innerloop-dev/gemma3-4b-text](https://huggingface.co/innerloop-dev/gemma3-4b-text)
+(Gemma Terms of Use), run by Ollama.
 
 
 The bot speaks with Microsoft's neural voices (`ar-LB-RamiNeural`, Lebanese,

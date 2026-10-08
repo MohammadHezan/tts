@@ -8,7 +8,7 @@
 #   - setup           generates Attendee's secrets, its API key and a private
 #                     certificate (deploy/setup_secrets.py)
 #   - attendee-setup  creates Attendee's database and registers that key
-#   - ollama-pull     downloads the ~4.9GB translation model
+#   - ollama-pull     downloads the ~2.5GB translation model
 # Only the translator's port (8765) is published. Attendee, its database and
 # Redis are reachable only inside this stack's Docker network.
 
@@ -94,12 +94,12 @@ services:
     restart: unless-stopped
 
   # One-shot: fetches the translation model into the ollama volume on first
-  # run (~4.9GB), then exits. Re-running is a fast no-op once it's there.
+  # run (~2.5GB), then exits. Re-running is a fast no-op once it's there.
   ollama-pull:
     image: ollama/ollama
     environment:
       OLLAMA_HOST: ollama:11434
-    entrypoint: ["ollama", "pull", "llama3.1:8b-instruct-q4_K_M"]
+    entrypoint: ["ollama", "pull", "hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M"]
     depends_on:
       ollama:
         condition: service_healthy

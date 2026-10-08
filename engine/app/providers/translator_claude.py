@@ -51,8 +51,8 @@ class ClaudeTranslator(TranslatorProvider):
             _API_URL,
             json={
                 "model": self._cfg.claude.model,
-                "system": build_system_prompt(self._cfg.domain_prompt, self._glossary),
-                "messages": build_messages(text, source_lang, target_lang, context),
+                "system": build_system_prompt(self._cfg.domain_prompt),
+                "messages": build_messages(text, source_lang, target_lang, context, self._glossary),
                 "max_tokens": min(self._cfg.claude.max_tokens, max_output_tokens(text)),
                 "temperature": 0,
             },

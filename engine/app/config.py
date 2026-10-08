@@ -77,10 +77,19 @@ class CohereAsrConfig(BaseModel):
 
     model: str = "oddadmix/cohere-transcribe-arabic-07-2026-dialectal-v2"
     revision: str | None = None  # a commit hash pins exactly what was tested
-    processor: str = "Newmetrics/cohere-transcribe-arabic-07-2026"  # the dialect repo ships no processor files
+    # Where the processor files come from. The dialect fine-tune above ships none;
+    # None = the model's own repo (right for CohereLabs/cohere-transcribe-03-2026
+    # and any repo that ships its processor).
+    processor: str | None = "Newmetrics/cohere-transcribe-arabic-07-2026"
     processor_revision: str | None = None
     cache_dir: str | None = None
     quantize: Literal["none", "int8"] = "int8"
+    # True = load with AutoProcessor / AutoModelForSpeechSeq2Seq and
+    # trust_remote_code, the way CohereLabs/cohere-transcribe-03-2026 documents
+    # (the repo ships its own modeling code). False = transformers' built-in
+    # CohereAsrForConditionalGeneration, which the dialect fine-tune uses.
+    # `model` may also be a local folder you downloaded the repo into.
+    trust_remote_code: bool = False
 
 
 class AsrConfig(BaseModel):
@@ -110,10 +119,10 @@ class AsrConfig(BaseModel):
 
 class OllamaConfig(BaseModel):
     base_url: str = "http://localhost:11434"
-    model: str = "llama3.1:8b-instruct-q4_K_M"
+    model: str = "hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M"
     timeout_s: float = 15.0
     # How long Ollama keeps the model in memory after a request. Its own default
-    # (5m) unloads it during a quiet stretch of a meeting, and reloading an 8B
+    # (5m) unloads it during a quiet stretch of a meeting, and reloading a multi-GB
     # model on CPU adds tens of seconds to the next sentence.
     keep_alive: str = "30m"
     # Context window in tokens (None = Ollama's default). Set, so the memory

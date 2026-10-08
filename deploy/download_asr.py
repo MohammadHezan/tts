@@ -14,11 +14,10 @@ cfg = load_config().asr
 if cfg.provider != "cohere":
     sys.exit(0)
 c = cfg.cohere
-jobs = [
-    (c.model, c.revision, ["*.json", "*.safetensors", "*.model", "*.txt"]),
+jobs = [(c.model, c.revision, ["*.json", "*.safetensors", "*.model", "*.txt", "*.py"])]
+if c.processor:  # else the model's own repo already ships its processor
     # Only the processor files from this repo; its weights are the base model's.
-    (c.processor, c.processor_revision, ["*.json", "*.model", "*.txt"]),
-]
+    jobs.append((c.processor, c.processor_revision, ["*.json", "*.model", "*.txt"]))
 for repo, revision, patterns in jobs:
     for attempt in range(1, 6):
         try:
@@ -26,6 +25,11 @@ for repo, revision, patterns in jobs:
             print(f"{repo}: {path}", flush=True)
             break
         except Exception as error:
+            if type(error).__name__ in ("GatedRepoError", "RepositoryNotFoundError"):
+                sys.exit(
+                    f"{repo} is gated: accept its terms on https://huggingface.co/{repo} with your Hugging Face account, "
+                    "then give this container that account's token (HF_TOKEN)."
+                )
             if attempt == 5:
                 raise
             print(f"{repo}: attempt {attempt} failed ({error}), retrying", file=sys.stderr, flush=True)

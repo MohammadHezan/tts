@@ -34,32 +34,25 @@ _DOMAIN_PROMPTS = {
 def build_system_prompt(domain_prompt: str, glossary: Glossary | None = None) -> str:
     domain = _DOMAIN_PROMPTS.get(domain_prompt, _DOMAIN_PROMPTS["retail_furniture"])
     prompt = (
-        "You are the translation step of a live interpreter: what you write is "
-        "spoken aloud to the other side of the call as the speaker's own words.\n"
-        f"{domain}\n\n"
-        "Each message gives one thing a speaker said and the language to translate "
-        "it into (English to Arabic, or Arabic to English).\n"
+        "You are the translation step of a live interpreter: your output is spoken "
+        "aloud to the other side of the call as the speaker's own words.\n"
+        f"{domain}\n"
+        "Each message gives what a speaker said and the direction (English to "
+        "Arabic, or Arabic to English).\n"
         "Rules:\n"
-        "- Output ONLY the translation of what was said. Never reply to it, answer "
-        "it, continue the conversation, ask a question, or add anything that was "
-        "not said - you are not a participant in the call.\n"
-        "- Translate all of it, fluently and naturally for spoken conversation, "
-        "not word-for-word.\n"
-        "- Long speech arrives phrase by phrase while the speaker is still "
-        "talking, so a message can be part of a sentence. Translate just that "
-        "part so it follows on from the previous one - never finish the "
-        "sentence or guess what comes next.\n"
-        "- Arabic speakers usually talk in Jordanian (Levantine) dialect, and every "
-        "message comes from speech recognition, which can garble a word: translate "
-        "what the speaker meant. Never comment on the message, say it is unclear, "
-        "or ask what it means - give your best translation.\n"
-        "- Translating into Arabic: always clear Modern Standard Arabic suitable for "
-        "a business setting, never dialect. Into English: natural business English "
-        "with an Australian register.\n"
-        "- Preserve proper names, brand names, product codes, and numbers "
-        "(prices, quantities, dates, measurements) EXACTLY as given - do not "
-        "convert units or currencies.\n"
-        "- No notes, no quotes, no explanations."
+        "- Output ONLY the translation. Never reply to it, answer it, ask or add "
+        "anything: you are not a participant in the call.\n"
+        "- Translate all of it, naturally for speech. A message can be just part "
+        "of a sentence: translate that part, never finish the sentence.\n"
+        "- The text comes from speech recognition and may be garbled (Arabic is "
+        "usually Jordanian dialect): translate what was meant, never say it is "
+        "unclear.\n"
+        "- Into Arabic: clear Modern Standard Arabic for business, never dialect. "
+        "Into English: natural business English, Australian register.\n"
+        "- Keep names, brands, product codes and numbers exactly; no unit or "
+        "currency conversion.\n"
+        "- A bracketed line of required wording gives exact terms to use; never "
+        "copy or mention the line."
     )
     glossary_block = glossary.format_for_prompt() if glossary else ""
     if glossary_block:
@@ -67,20 +60,32 @@ def build_system_prompt(domain_prompt: str, glossary: Glossary | None = None) ->
     return prompt
 
 
-def build_translation_request(text: str, source_lang: str, target_lang: str) -> str:
+def build_translation_request(text: str, source_lang: str, target_lang: str, glossary: Glossary | None = None) -> str:
+    """`glossary` adds a line with only the terms this text contains (see
+    Glossary.format_hint) - the system prompt stays one constant, short text."""
     src = _LANG_NAMES.get(source_lang, source_lang)
     tgt = _LANG_NAMES.get(target_lang, target_lang)
-    return f"Translate from {src} into {tgt}:\n{text}"
+    request = f"Translate from {src} into {tgt}:\n{text}"
+    hint = glossary.format_hint(text) if glossary else ""
+    if hint:
+        request += f"\n[Required wording, English = Arabic: {hint}]"
+    return request
 
 
-def build_messages(text: str, source_lang: str, target_lang: str, context: list[TurnContext] | None) -> list[dict[str, str]]:
+def build_messages(
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    context: list[TurnContext] | None,
+    glossary: Glossary | None = None,
+) -> list[dict[str, str]]:
     """Prior turns (Pipeline's rolling context_turns window) as the same
     request/translation pairs, then this turn's request."""
     messages: list[dict[str, str]] = []
     for turn in context or []:
         messages.append({"role": "user", "content": build_translation_request(turn.source_text, turn.source_lang, turn.target_lang)})
         messages.append({"role": "assistant", "content": turn.translated_text})
-    messages.append({"role": "user", "content": build_translation_request(text, source_lang, target_lang)})
+    messages.append({"role": "user", "content": build_translation_request(text, source_lang, target_lang, glossary)})
     return messages
 
 

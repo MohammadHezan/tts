@@ -53,7 +53,7 @@ translator:
   glossary_path: glossary.yaml
   ollama:
     base_url: http://ollama:11434
-    model: llama3.1:8b-instruct-q4_K_M
+    model: hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M
     timeout_s: 120 # CPU-only Ollama: the first request also loads the model
   claude:
     model: claude-haiku-4-5-20251001
