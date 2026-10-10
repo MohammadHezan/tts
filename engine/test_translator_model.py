@@ -319,7 +319,7 @@ def gpu_report() -> dict | None:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10, check=True,
-        ).stdoutWriter
+        ).stdout
     except (subprocess.SubprocessError, OSError):
         return None
     gpus = []

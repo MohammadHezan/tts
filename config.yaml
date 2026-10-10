@@ -24,9 +24,9 @@ vad:
 asr:
   provider: cohere
   cohere:
-    model: /path/to/cohere-transcribe-03-2026
+    model: /path/to/cohere-transcribe-03-2026 # a folder with CohereLabs/cohere-transcribe-03-2026 (gated: accept its terms on huggingface.co)
     processor: null
-    trust_remote_code: true
+    trust_remote_code: false  # transformers 5.x has the model built in; the bundled code breaks on it
     quantize: none
 
 translator:

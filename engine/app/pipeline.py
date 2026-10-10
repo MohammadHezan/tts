@@ -130,6 +130,10 @@ class Pipeline:
             else:
                 self._out.put_nowait(None)
 
+    def speaker_active(self) -> bool:
+        """Whether the meeting is being talked in right now (see SpeechEndpointer.is_speaking)."""
+        return self._vad.is_speaking
+
     def close(self) -> None:
         """Stops the background queue without finishing it (flush() finishes it)."""
         for task in (self._worker, self._speaker):
@@ -194,7 +198,9 @@ class Pipeline:
         if hyp.text and self._accept_transcript is not None and not self._accept_transcript(hyp.text, hyp.language):
             log_event(_LOGGER, logging.INFO, "transcript_rejected", turn_id=turn.turn_id, lang=hyp.language)
             return
-        yield self._event(turn, EventType.FINAL, hyp.language, hyp.text, is_final_segment=True)
+        final = self._event(turn, EventType.FINAL, hyp.language, hyp.text, is_final_segment=True)
+        final.speech_ms = len(vad_event.audio) / self._cfg.audio.sample_rate_hz * 1000
+        yield final
 
         if not hyp.text:
             self._complete(turn)
@@ -289,7 +295,9 @@ class Pipeline:
             if not translated:
                 continue  # nothing left to say once the model's remarks are removed
             translated_sentences.append(translated)
-            yield self._event(turn, EventType.TRANSLATION, target_lang, translated, is_final_segment=True)
+            translation = self._event(turn, EventType.TRANSLATION, target_lang, translated, is_final_segment=True)
+            translation.merged_turn_ids = list(turn.merged_ids)
+            yield translation
             if self._tts is not None and (self._should_speak is None or self._should_speak(target_lang)):
                 yield asyncio.create_task(self._speak(turn, translated, target_lang, i))
 

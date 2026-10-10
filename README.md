@@ -89,13 +89,56 @@ One meeting, in `engine/app/`:
   on the processor), the translator
   (`providers/translator_ollama.py`, prompt in `prompts.py`) and the voice
   (`providers/tts_neural.py`) in order, in the background.
-- `meeting_chat.py`: anyone in the meeting can type in the chat:
-  `mute` / `unmute` (`اسكت` / `تكلم`) for the whole bot, or `mute arabic` /
-  `mute english` (`اسكت عربي` / `اسكت انجليزي`) to stop one language. The
-  meeting mixes the bot's voice for everyone, so no one can mute it for
-  themselves alone - but each side only needs its own language, so switching
-  off that language is how a side turns it off for itself. The dashboard has
-  the same buttons.
+- `chat_captions.py`: types the interpretation in the meeting chat as it
+  happens - each phrase as `[EN] what was said`, then `[AR] its translation` -
+  before its voice is even made. The chat is output only: the bot reads
+  nothing from it and answers no commands.
+- `switches.py`: the dashboard's buttons, live and per meeting. **Voice (TTS)**
+  off means the bot is silent and no voice is synthesized (Arabic or English
+  alone too: the meeting mixes the bot's voice for everyone, so each side
+  turns off the language it doesn't need). **Chat text** off stops the typed
+  lines; **Also type what was heard** switches the original sentence on or
+  off beside its translation. **Pause** makes the bot hear and translate
+  nothing until resumed. Defaults: `meeting:` in the config.
+
+## Admin login
+
+The dashboard and everything behind it (including sending a bot into a meeting)
+need the admin login; only `/healthz`, the login page and the bot's own audio
+socket are open. The login lives in the `.env` file in this folder, which is
+**not in git** - create it on each computer:
+
+```
+python deploy/set_admin.py          # asks for a username and password, writes .env
+```
+
+or copy `.env` from the computer where you made it. Without it the dashboard is
+open, as before. Restart the interpreter afterwards.
+
+## The meeting document
+
+During a meeting the bot only writes down each sentence and who said it (the
+`meeting-data` folder, on this PC, not in git; `meeting:` in the config). Nothing
+is summarized while people talk. When Attendee reports the meeting has ended, the
+interpreter writes `meeting-data/<bot>-summary.docx`: the notes of the whole
+meeting, then each speaker's summary and everything they said (Arabic as spoken,
+with its English). The dashboard's *Download meeting document* button gives the
+sentences only during a meeting, the summary after it. Who spoke comes from
+Attendee's speech start/stop events; the summaries are written in English by the
+plain Gemma 3 4B (`meeting.summary_model`), and can contain mistakes.
+
+## Our own models (`local-models/`, not in git)
+
+`docker-compose.gpu.yml` uses two models that are too big for git, mounted from
+`local-models/`:
+
+- `cohere-transcribe-03-2026/` - the speech model (gated: accept its terms on
+  huggingface.co, then download it, or set `HF_TOKEN` and the stack downloads it).
+- `gemma3-4b-lora-aggr.gguf` + `Modelfile` - the translation model: Gemma 3 4B with
+  our Arabic<->English LoRA (`training/`), vocabulary cut to English and Arabic
+  (`deploy/prune_model.py`). **Without these files the stack falls back to the
+  plain Gemma 3 4B** (a little less accurate: 93% instead of 96% on
+  `engine/test_translator_model.py`). Copy the folder from the computer that has it.
 
 ## Settings you might change
 

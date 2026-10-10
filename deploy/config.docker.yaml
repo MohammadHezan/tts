@@ -85,6 +85,10 @@ tts:
     config_path: null
     length_scale: 1.05
 
+meeting:
+  record_dir: /srv/meetings # the sentences of each meeting, saved on this PC (the meeting-data folder)
+  utc_offset_minutes: 180 # times in the summary document: Jordan
+
 logging:
   level: INFO
   structured: true

@@ -84,6 +84,8 @@ class CohereAsrConfig(BaseModel):
     processor_revision: str | None = None
     cache_dir: str | None = None
     quantize: Literal["none", "int8"] = "int8"
+    # Decode the candidate languages together in one batched pass (about half the time).
+    batch_languages: bool = True
     # True = load with AutoProcessor / AutoModelForSpeechSeq2Seq and
     # trust_remote_code, the way CohereLabs/cohere-transcribe-03-2026 documents
     # (the repo ships its own modeling code). False = transformers' built-in
@@ -184,6 +186,37 @@ class TtsConfig(BaseModel):
     neural: NeuralTtsConfig = Field(default_factory=NeuralTtsConfig)
 
 
+class MeetingConfig(BaseModel):
+    """What the bot does in the meeting by default; the dashboard buttons and the
+    dashboard buttons (voice, chat text, pause) change it per bot, live."""
+
+    voice: bool = True  # speak the translations (TTS); off = no voice is even synthesized
+    chat_text: Literal["off", "translation", "both"] = "both"  # typed in the meeting chat: what was heard, then its translation
+    chat_max_chars: int = 400  # longer translations go as several chat messages
+    # The voice is made while someone is still talking but only spoken once they
+    # stop (a clip already playing is never cut off). hold_max_s: someone who
+    # talks on without a real pause for that long is interpreted anyway.
+    hold_voice: bool = True
+    hold_release_ms: int = 300  # quiet this long after the last word before it speaks
+    hold_max_s: float = 30.0
+    # The meeting record for the summary document: every phrase heard and its
+    # translation, with times, saved here (a folder on this PC; None = not kept).
+    record_dir: str | None = None
+    utc_offset_minutes: int = 0  # the times in the summary document (Jordan: 180)
+    # Writes the summaries. Not the translation model: its training made it
+    # answer in one short sentence whatever it is asked.
+    summary_model: str = "hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M"
+
+
+class AuthConfig(BaseModel):
+    """The dashboard's admin login (app/auth.py). Off while password_hash is empty.
+    Set it with deploy/set_admin.py - the password itself is never stored."""
+
+    username: str = "admin"
+    password_hash: str = ""
+    session_hours: float = 12.0
+
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     structured: bool = True
@@ -196,6 +229,8 @@ class EngineConfig(BaseModel):
     asr: AsrConfig = Field(default_factory=AsrConfig)
     translator: TranslatorConfig = Field(default_factory=TranslatorConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)
+    meeting: MeetingConfig = Field(default_factory=MeetingConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 

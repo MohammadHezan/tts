@@ -49,3 +49,8 @@ class PipelineEvent(BaseModel):
     audio_sample_rate: int | None = Field(default=None, description="Sample rate of `audio`, Hz")
     timestamp: float = Field(default_factory=time.time)
     error: str | None = None
+    # For the meeting record (never sent to dashboards or apps): how long the
+    # phrase was spoken (FINAL), and the earlier queued phrases that were
+    # translated together with this one (TRANSLATION).
+    speech_ms: float | None = None
+    merged_turn_ids: list[str] = Field(default_factory=list)

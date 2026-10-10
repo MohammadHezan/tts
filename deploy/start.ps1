@@ -151,13 +151,19 @@ if ($ip) { $Env:INTERPRETER_PHONE_URL = "http://${ip}:$Port" }
 # 5. Download (first time ~15 GB) and start
 Say 'Getting the interpreter ready. The first time this downloads about 15 GB.'
 & docker compose pull --ignore-pull-failures
+if (Test-Path (Join-Path (Get-Location) 'local-models')) {
+    # Our own build (the meeting-chat captions and the dashboard switches live in this folder's code).
+    Say 'Building the translator from this folder (the first time takes a few minutes)...'
+    & docker compose build translator
+    if ($LASTEXITCODE -ne 0) { Say 'Building failed - see the messages above.'; exit 1 }
+}
 & docker compose up -d
 if ($LASTEXITCODE -ne 0) { Say 'Starting failed - see the messages above.'; exit 1 }
 
 $models = 'the 2.5 GB translation model'
 $pulls = @('setup', 'attendee-setup', 'ollama-pull')
 if ($useGpu) {  # docker-compose.gpu.yml: Gemma 3 4B, and the speech model
-    $models = 'the 2.5 GB translation model and the 4 GB speech model'
+    $models = 'the translation model and the 4 GB speech model'
     $pulls += 'asr-pull'
 }
 Say "Starting up (the first start also downloads $models)..."
@@ -187,7 +193,7 @@ Say ''
 # The translator is up; the meeting service (Attendee) can take a little longer.
 for ($i = 0; $i -lt 60; $i++) {
     try {
-        $config = Invoke-RestMethod -TimeoutSec 10 "http://localhost:$Port/api/bots/config"
+        $config = Invoke-RestMethod -TimeoutSec 10 "http://localhost:$Port/api/ready"
         if ($config.attendee_ready) { break }
     } catch { }
     Start-Sleep -Seconds 5

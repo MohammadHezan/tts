@@ -50,7 +50,9 @@ from difflib import SequenceMatcher
 import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 
+from app.chat_captions import ChatCaptioner, caption_line
 from app.logging_utils import get_logger, log_event
+from app.meeting_record import MeetingRecorder
 from app.pipeline import Pipeline
 from app.schema import EventType, PipelineEvent
 from app.text_normalize import normalize_text
@@ -116,26 +118,49 @@ class BotEventHub:
 
 class BotControls:
     """Per-bot switches the dashboard, the phone and the meeting chat flip
-    mid-meeting, and when each bot's audio was last heard."""
+    mid-meeting, and when each bot's audio was last heard.
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    voice (TTS): off = the bot stays silent AND no voice is synthesized.
+    text: what is typed in the meeting chat - "off", "translation" or "both"
+        (what was heard as well); a language can be switched off on its own.
+    hold: the voice is made while someone talks but spoken once they stop.
+    paused: the bot ignores the meeting entirely (no transcription, no
+        translation, no voice) until resumed - for a private aside."""
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        voice_default: bool = True,
+        text_default: str = "translation",
+        hold_default: bool = True,
+    ) -> None:
         self._muted: set[str] = set()
+        self._unmuted: set[str] = set()  # explicitly on, when voice_default is off
+        self._voice_default = voice_default
         # Languages the bot doesn't speak for now. The meeting mixes the bot's
         # voice for everyone, so nobody can mute it for themselves alone - but
         # each side only needs the translations into its own language, so
         # silencing one language is how one side turns it off for itself.
         self._silent_languages: dict[str, set[str]] = defaultdict(set)
+        self._text_default = text_default
+        self._text_mode: dict[str, str] = {}
+        self._text_off_languages: dict[str, set[str]] = defaultdict(set)
+        self._paused: set[str] = set()
+        self._hold_default = hold_default
+        self._hold: dict[str, bool] = {}
         self._heard: dict[str, float] = {}
         self._clock = clock
 
     def set_muted(self, bot_id: str, muted: bool) -> None:
         if muted:
             self._muted.add(bot_id)
+            self._unmuted.discard(bot_id)
         else:
             self._muted.discard(bot_id)
+            self._unmuted.add(bot_id)
 
     def is_muted(self, bot_id: str) -> bool:
-        return bot_id in self._muted
+        return bot_id in self._muted or (not self._voice_default and bot_id not in self._unmuted)
 
     def set_language_muted(self, bot_id: str, lang: str, muted: bool) -> None:
         if muted:
@@ -147,7 +172,42 @@ class BotControls:
         return set(self._silent_languages.get(bot_id, ()))
 
     def speaks(self, bot_id: str, lang: str) -> bool:
-        return bot_id not in self._muted and lang not in self._silent_languages.get(bot_id, ())
+        return not self.is_muted(bot_id) and lang not in self._silent_languages.get(bot_id, ())
+
+    def text_mode(self, bot_id: str) -> str:
+        return self._text_mode.get(bot_id, self._text_default)
+
+    def set_text_mode(self, bot_id: str, mode: str) -> None:
+        self._text_mode[bot_id] = mode
+
+    def set_text_language_off(self, bot_id: str, lang: str, off: bool) -> None:
+        if off:
+            self._text_off_languages[bot_id].add(lang)
+        else:
+            self._text_off_languages[bot_id].discard(lang)
+
+    def text_off_languages(self, bot_id: str) -> set[str]:
+        return set(self._text_off_languages.get(bot_id, ()))
+
+    def types_text(self, bot_id: str, lang: str) -> bool:
+        """Whether translations into `lang` are typed in the meeting chat."""
+        return self.text_mode(bot_id) != "off" and lang not in self._text_off_languages.get(bot_id, ())
+
+    def set_paused(self, bot_id: str, paused: bool) -> None:
+        if paused:
+            self._paused.add(bot_id)
+        else:
+            self._paused.discard(bot_id)
+
+    def is_paused(self, bot_id: str) -> bool:
+        return bot_id in self._paused
+
+    def set_hold(self, bot_id: str, hold: bool) -> None:
+        self._hold[bot_id] = hold
+
+    def holds_voice(self, bot_id: str) -> bool:
+        """Whether the voice waits for the speaker to stop before it speaks."""
+        return self._hold.get(bot_id, self._hold_default)
 
     def heard_from(self, bot_id: str) -> None:
         self._heard[bot_id] = self._clock()
@@ -231,6 +291,11 @@ async def run_bridge(
     hub: BotEventHub,
     controls: BotControls | None = None,
     half_duplex: bool = True,
+    chat: ChatCaptioner | None = None,
+    hold_release_s: float = 0.3,
+    hold_max_s: float = 30.0,
+    recorder: MeetingRecorder | None = None,
+    on_disconnect: Callable[[str], None] | None = None,
 ) -> None:
     """Serve one Attendee bot connection until it disconnects.
 
@@ -243,6 +308,7 @@ async def run_bridge(
     bot_id = "unknown"
     speaking_until = 0.0  # monotonic time until which the meeting audio is ignored
     gated_frames = 0
+    closing = False  # the meeting is over: nothing is held any more
 
     def accept_transcript(text: str, lang: str) -> bool:
         if echoes.is_echo(text, lang):
@@ -256,26 +322,47 @@ async def run_bridge(
         background=True,
     )
     frames: asyncio.Queue[bytes | None] = asyncio.Queue()
-    outgoing: asyncio.Queue[str | None] = asyncio.Queue()
+    outgoing: asyncio.Queue[list[str] | None] = asyncio.Queue()  # one item per clip of the bot's voice
+
+    async def wait_for_quiet() -> None:
+        """The voice is ready; hold it while someone is talking, then speak once
+        they have been quiet for hold_release_s. Gives up after hold_max_s, so
+        a long monologue is still interpreted."""
+        started = quiet_since = time.monotonic()
+        while not closing and time.monotonic() - started < hold_max_s:
+            if pipeline.speaker_active():
+                quiet_since = time.monotonic()
+            elif time.monotonic() - quiet_since >= hold_release_s:
+                return
+            await asyncio.sleep(0.05)
 
     async def send_paced() -> None:
         # Real-time pacing, so Attendee receives the bot's voice the way a live
         # microphone would deliver it, whatever its own buffering behaviour is.
         nonlocal speaking_until
-        while (message := await outgoing.get()) is not None:
-            if controls.is_muted(bot_id):
-                continue  # muted mid-sentence: the rest of it is dropped, not delayed
-            await ws.send_text(message)
-            speaking_until = time.monotonic() + OUTPUT_CHUNK_MS / 1000 + ECHO_TAIL_S
-            await asyncio.sleep(OUTPUT_CHUNK_MS / 1000)
+        while (clip := await outgoing.get()) is not None:
+            if controls.holds_voice(bot_id):
+                await wait_for_quiet()
+            for message in clip:
+                if controls.is_muted(bot_id):
+                    break  # muted mid-sentence: the rest of it is dropped, not delayed
+                await ws.send_text(message)
+                speaking_until = time.monotonic() + OUTPUT_CHUNK_MS / 1000 + ECHO_TAIL_S
+                await asyncio.sleep(OUTPUT_CHUNK_MS / 1000)
 
     def handle(event: PipelineEvent) -> None:
         if event.type is EventType.AUDIO and event.audio:
             echoes.said(event.text, event.lang)
-            for message in bot_output_messages(event.audio, event.audio_sample_rate or OUTPUT_SAMPLE_RATE):
-                outgoing.put_nowait(message)
+            outgoing.put_nowait(bot_output_messages(event.audio, event.audio_sample_rate or OUTPUT_SAMPLE_RATE))
         elif event.type in CAPTION_EVENT_TYPES:
-            hub.publish(bot_id, event.model_dump_json(exclude={"audio"}))
+            hub.publish(bot_id, event.model_dump_json(exclude={"audio", "speech_ms", "merged_turn_ids"}))
+            if recorder is not None:
+                recorder.record(bot_id, event)  # just written down: nothing is summarized while the meeting runs
+            if chat is not None and event.text and event.type is not EventType.ERROR and controls.types_text(bot_id, event.lang):
+                # Typed in the meeting's chat the moment it exists: a translation
+                # (always, unless text is off), what was heard too in "both" mode.
+                if event.type is EventType.TRANSLATION or controls.text_mode(bot_id) == "both":
+                    chat.post(bot_id, caption_line(event.lang, event.text))
 
     async def process() -> None:
         # Its own task, so the socket keeps being read while a phrase is being
@@ -309,7 +396,7 @@ async def run_bridge(
             chunk = resample(
                 base64.b64decode(data["chunk"]), data.get("sample_rate", ATTENDEE_SAMPLE_RATE), pipeline_sample_rate
             )
-            if half_duplex and time.monotonic() < speaking_until:
+            if controls.is_paused(bot_id) or (half_duplex and time.monotonic() < speaking_until):
                 # Silence rather than dropping the audio, so the endpointer's
                 # timing stays true and an open utterance still ends.
                 chunk = bytes(len(chunk))
@@ -327,10 +414,15 @@ async def run_bridge(
             await interpreter
         finally:
             interpreter.cancel()  # only still running if processing crashed
+            closing = True
             pipeline.close()
+            if chat is not None:
+                await chat.close(bot_id)
             outgoing.put_nowait(None)
             try:
                 await sender
             except (RuntimeError, WebSocketDisconnect):
                 pass  # Attendee already closed the socket; nothing left to deliver to
+            if on_disconnect is not None and bot_id != "unknown":
+                on_disconnect(bot_id)
             log_event(logger, logging.INFO, "attendee_bot_disconnected", bot_id=bot_id, chunks_ignored_while_speaking=gated_frames)

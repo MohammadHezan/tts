@@ -210,9 +210,21 @@ async def synthesize(voices_per_lang: int, cache: Path) -> list[Clip]:
                     if available is None:
                         continue
                     data = bytearray()
-                    async for chunk in edge_tts.Communicate(text, voice).stream():
-                        if chunk["type"] == "audio":
-                            data += chunk["data"]
+                    error = None
+                    for attempt in range(5):  # the service answers 403 now and then (throttling)
+                        data.clear()
+                        try:
+                            async for chunk in edge_tts.Communicate(text, voice).stream():
+                                if chunk["type"] == "audio":
+                                    data += chunk["data"]
+                            error = None
+                            break
+                        except Exception as exc:
+                            error = exc
+                            await asyncio.sleep(4 * (attempt + 1))
+                    if error is not None:
+                        print(f"voice {voice} unusable ({str(error)[:60]}); skipping it")
+                        break
                     audio, sr = sf.read(__import__("io").BytesIO(bytes(data)), dtype="float32", always_2d=True)
                     mono = audio.mean(axis=1)
                     mono = np.interp(np.linspace(0, len(mono) - 1, int(len(mono) * SR / sr)), np.arange(len(mono)), mono)
@@ -254,7 +266,7 @@ def build_asr(spec: str, cpu: bool):
         # (which names a processor repo) uses transformers' built-in class
         cfg = AsrConfig(
             provider="cohere", language="auto", candidate_languages=["en", "ar"],
-            cohere=CohereAsrConfig(model=repo, processor=processor or None, quantize="none", trust_remote_code=not processor),
+            cohere=CohereAsrConfig(model=repo, processor=processor or None, quantize="none", trust_remote_code=False),
         )
         return CohereAsr(cfg)
     if kind == "whisper":

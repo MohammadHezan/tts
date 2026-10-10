@@ -12,6 +12,7 @@
 <header class="topbar">
   <h1>Meeting Interpreter</h1>
   <span id="status" class="status status-disconnected">No bot</span>
+  <button id="logout" class="secondary" title="Log out">Log out</button>
 </header>
 
 <main>
@@ -26,16 +27,20 @@
     <label for="bot-name">Bot name shown in the meeting</label>
     <input id="bot-name" type="text" autocomplete="off" value="AI Interpreter" />
     <button id="send-bot">Send interpreter into meeting</button>
-    <button id="mute-bot" class="secondary" hidden>Mute interpreter</button>
+    <button id="mute-bot" class="secondary" hidden>Voice (TTS): on</button>
     <button id="mute-ar" class="secondary" hidden data-lang="ar">Arabic voice: on</button>
     <button id="mute-en" class="secondary" hidden data-lang="en">English voice: on</button>
+    <button id="text-bot" class="secondary" hidden>Chat text: on</button>
+    <button id="heard-bot" class="secondary" hidden>Also type what was heard: off</button>
+    <button id="hold-bot" class="secondary" hidden>Speak when I stop: on</button>
+    <button id="pause-bot" class="secondary" hidden>Pause interpreter</button>
+    <button id="summary-bot" class="secondary" hidden>Download meeting document (.docx)</button>
     <button id="remove-bot" class="secondary" hidden>Remove bot</button>
     <p id="bot-hint" class="hint"></p>
   </section>
 
   <p id="phone-hint" class="hint" hidden></p>
 
-  <section id="turns" class="turns"></section>
 </main>
 
 <script src="bot.js"></script>

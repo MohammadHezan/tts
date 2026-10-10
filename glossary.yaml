@@ -21,6 +21,10 @@ terms:
     ar: "شحنة"
   # Materials and pieces - a small model mixes these up otherwise (it rendered
   # "walnut wood" as cedar, خشب الأرز, in the meeting simulation).
+  - en: "table"
+    ar: "طاولة"
+  - en: "shelves"
+    ar: "رفوف"
   - en: "walnut"
     ar: "خشب الجوز"
   - en: "oak"

@@ -21,6 +21,11 @@ from typing import Any
 import httpx
 
 
+# Attendee's bot states: in the call, and finished.
+IN_MEETING = {"joined_not_recording", "joined_recording", "joined_recording_paused", "joined_recording_permission_denied"}
+FINISHED = {"ended", "fatal_error"}
+
+
 class AttendeeError(RuntimeError):
     def __init__(self, status_code: int, detail: str) -> None:
         super().__init__(f"Attendee API returned {status_code}: {detail}")
@@ -87,6 +92,10 @@ class AttendeeClient:
         if cursor:
             params["cursor"] = cursor
         return await self._request("GET", f"/api/v1/bots/{bot_id}/chat_messages", params=params)
+
+    async def participant_events(self, bot_id: str, cursor: str | None = None) -> dict[str, Any]:
+        """Join / leave / speech start / speech stop of everyone in the meeting (cursor-paged)."""
+        return await self._request("GET", f"/api/v1/bots/{bot_id}/participant_events", params={"cursor": cursor} if cursor else None)
 
     async def send_chat_message(self, bot_id: str, message: str) -> dict[str, Any]:
         """Posts `message` in the meeting chat as the bot (Attendee: no emoji)."""

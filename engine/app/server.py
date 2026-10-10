@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
 import logging
 import os
 import secrets
@@ -34,15 +35,21 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.auth import PUBLIC_PATHS, Auth, AuthMiddleware
 from app.attendee_bridge import ATTENDEE_SAMPLE_RATE, BotControls, BotEventHub, run_bridge
 from app.attendee_client import AttendeeClient, AttendeeError, AttendeeSettings
 from app.config import load_config
 from app.logging_utils import configure_logging, get_logger, log_event
-from app.meeting_chat import IN_MEETING, announce, apply_command, watch_chat
+from app.chat_captions import ChatCaptioner
+from app.meeting_record import MeetingRecorder
+from app.summary import ollama_asker
+from app.summary_service import NothingToSummarize, fetch_participant_events, make_summary
+from app.attendee_client import FINISHED, IN_MEETING
+from app.switches import apply_switch, is_valid, state as switch_state
 from app.pipeline import Pipeline
 from app.providers.base import build_asr_provider, build_translator_provider, build_tts_provider
 
@@ -96,7 +103,12 @@ _tts = build_tts_provider(_cfg.tts)  # None when tts.provider: none - captions o
 # through the bot, so the URL handed to Attendee carries a secret.
 _BRIDGE_TOKEN = os.environ.get("ATTENDEE_BRIDGE_TOKEN") or secrets.token_urlsafe(24)
 _bot_hub = BotEventHub()
-_bot_controls = BotControls()
+_bot_controls = BotControls(voice_default=_cfg.meeting.voice, text_default=_cfg.meeting.chat_text, hold_default=_cfg.meeting.hold_voice)
+_chat_captions = ChatCaptioner(max_chars=_cfg.meeting.chat_max_chars)
+_recorder = MeetingRecorder(_cfg.meeting.record_dir)
+_summary_lock = asyncio.Lock()  # one summary at a time
+_after_meeting_tasks: dict[str, asyncio.Task] = {}
+LIVE_WITHIN_S = 20  # audio from the bot this recently: the meeting is still going
 _STARTED = time.monotonic()
 # A bot Attendee still calls "in the meeting" whose audio hasn't reached us in
 # this long is gone (its worker died with a restart of the computer or Docker).
@@ -104,6 +116,8 @@ STALE_AFTER_START_S = 90
 STALE_SILENCE_S = 600
 
 app = FastAPI(title="Arabic<->English Speech Translation Engine")
+# Everything but the health check, the login page and the bot's audio socket needs the admin login.
+app.add_middleware(AuthMiddleware, auth=Auth(_cfg.auth))
 
 
 class CreateBotRequest(BaseModel):
@@ -111,10 +125,19 @@ class CreateBotRequest(BaseModel):
     bot_name: str = "AI Interpreter"
 
 
+class SwitchRequest(BaseModel):
+    """One of the interpreter's switches: the dashboard's voice (TTS), chat text and pause buttons."""
+
+    feature: Literal["voice", "text", "hold", "interpreter"]
+    # voice: on | off. text: on | off | both. interpreter: pause | resume.
+    value: Literal["on", "off", "both", "pause", "resume"]
+    language: Literal["ar", "en"] | None = None
+
+
 class MuteRequest(BaseModel):
     muted: bool
     # None: the whole bot. "ar"/"en": only its voice in that language - how
-    # one side of the call turns it off for itself (see meeting_chat.py).
+    # one side of the call turns it off for itself.
     language: Literal["ar", "en"] | None = None
 
 
@@ -205,6 +228,13 @@ async def _attendee_status() -> tuple[bool, str | None]:
         await client.aclose()
 
 
+@app.get("/api/ready")
+async def ready() -> dict[str, bool]:
+    """Public, and only a yes/no: the start script waits on it before the login exists."""
+    ok, _ = await _attendee_status()
+    return {"attendee_ready": ok}
+
+
 @app.get("/api/bots/config")
 async def bots_config(request: Request) -> dict[str, Any]:
     callback = _bridge_ws_url(request).split("?", 1)[0]
@@ -293,9 +323,6 @@ async def create_bot(body: CreateBotRequest, request: Request) -> dict[str, Any]
     bot = await _call_attendee(
         lambda client: client.create_bot(body.meeting_url, body.bot_name, ws_url, ATTENDEE_SAMPLE_RATE)
     )
-    if bot.get("id"):
-        # "mute" / "unmute" typed in the meeting's chat (app/meeting_chat.py)
-        _in_background(watch_chat(bot["id"], _bot_controls))
     return bot
 
 
@@ -349,27 +376,118 @@ async def get_bot(bot_id: str) -> dict[str, Any]:
             "This bot lost its connection to the interpreter (the computer or Docker restarted), "
             "so it can't hear the meeting. Send a new one."
         )
-    bot["muted"] = _bot_controls.is_muted(bot_id)
-    bot["muted_languages"] = sorted(_bot_controls.muted_languages(bot_id))
+    bot.update(_switch_state(bot_id))
     return bot
+
+
+def _switch_state(bot_id: str) -> dict[str, Any]:
+    return switch_state(_bot_controls, bot_id)
+
+
+@app.post("/api/bots/{bot_id}/switch")
+async def switch_bot(bot_id: str, body: SwitchRequest) -> dict[str, Any]:
+    """The dashboard's buttons for voice (TTS), the chat text and pause."""
+    if not is_valid(body.feature, body.value, body.language):
+        raise HTTPException(status_code=422, detail=f"{body.feature} can't be set to {body.value}" + (f" for {body.language}" if body.language else ""))
+    apply_switch(_bot_controls, bot_id, body.feature, body.value, body.language)
+    log_event(
+        _logger, logging.INFO, "attendee_bot_switch",
+        bot_id=bot_id, feature=body.feature, value=body.value, language=body.language or "all",
+    )
+    return {"id": bot_id, **_switch_state(bot_id)}
 
 
 @app.post("/api/bots/{bot_id}/mute")
 async def mute_bot(bot_id: str, body: MuteRequest) -> dict[str, Any]:
     """Stops (or restarts) the bot's voice in the meeting - all of it, or one
-    language; its captions keep going."""
-    announcement = apply_command(_bot_controls, bot_id, (body.muted, body.language))
+    language; its captions keep going. (The phone app's mute button.)"""
+    apply_switch(_bot_controls, bot_id, "voice", "off" if body.muted else "on", body.language)
     log_event(
         _logger, logging.INFO, "attendee_bot_muted" if body.muted else "attendee_bot_unmuted",
         bot_id=bot_id, language=body.language or "all",
     )
-    if announcement:  # so everyone in the call knows why it went quiet, and how to undo it
-        _in_background(announce(bot_id, announcement))
-    return {
-        "id": bot_id,
-        "muted": _bot_controls.is_muted(bot_id),
-        "muted_languages": sorted(_bot_controls.muted_languages(bot_id)),
-    }
+    return {"id": bot_id, **_switch_state(bot_id)}
+
+
+def _meeting_is_live(bot_id: str) -> bool:
+    heard = _bot_controls.seconds_since_heard(bot_id)
+    return heard is not None and heard < LIVE_WITHIN_S
+
+
+async def _summary_document(bot_id: str, with_summary: bool) -> bytes:
+    """The Word document for a meeting. The summaries come from the local model, so this is only
+    called with them once the meeting is over."""
+    ollama = _cfg.translator.ollama
+    ask = ollama_asker(ollama.base_url, _cfg.meeting.summary_model, ollama.num_ctx, ollama.keep_alive)
+
+    async def events() -> list[dict[str, Any]]:
+        client = _attendee_client()
+        try:
+            return await fetch_participant_events(client, bot_id)
+        finally:
+            await client.aclose()
+
+    zone = datetime.timezone(datetime.timedelta(minutes=_cfg.meeting.utc_offset_minutes))
+    async with _summary_lock:
+        return await make_summary(_recorder, bot_id, events, ask, zone, with_summary)
+
+
+def _after_meeting(bot_id: str) -> None:
+    """The bot's audio stopped: once Attendee says the meeting has ended, write the summary."""
+    if not _recorder.enabled or (task := _after_meeting_tasks.get(bot_id)) and not task.done():
+        return
+    _after_meeting_tasks[bot_id] = asyncio.create_task(_write_summary_when_over(bot_id))
+
+
+async def _write_summary_when_over(bot_id: str) -> None:
+    deadline = time.monotonic() + 600
+    try:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(10)
+            if _meeting_is_live(bot_id):
+                return  # it reconnected: the meeting goes on, and ends later
+            try:
+                state = (await _call_attendee(lambda client: client.get_bot(bot_id))).get("state")
+            except HTTPException:
+                continue
+            if state in FINISHED:
+                break
+        else:
+            return
+        data = await _summary_document(bot_id, with_summary=True)
+        _recorder.summary_path(bot_id).write_bytes(data)
+        log_event(_logger, logging.INFO, "meeting_summary_written", bot_id=bot_id, file=str(_recorder.summary_path(bot_id)))
+    except NothingToSummarize:
+        pass
+    except Exception as error:  # a failed summary must never touch anything else
+        log_event(_logger, logging.WARNING, "meeting_summary_failed", bot_id=bot_id, error=repr(error))
+
+
+@app.get("/api/bots/{bot_id}/summary.docx")
+async def meeting_summary(bot_id: str, refresh: bool = False) -> Response:
+    """The meeting's Word document. While the meeting is going: the sentences only, at once (no
+    model runs during a meeting). After it: the summary written when it ended, or written now."""
+    if not _recorder.enabled:
+        raise HTTPException(404, "Meeting records are switched off (meeting.record_dir in the config).")
+    live = _meeting_is_live(bot_id)
+    saved = _recorder.summary_path(bot_id)
+    try:
+        if live:
+            data, name = await _summary_document(bot_id, with_summary=False), "meeting-sentences-so-far.docx"
+        elif saved.exists() and not refresh:
+            data, name = saved.read_bytes(), "meeting-summary.docx"
+        else:
+            data, name = await _summary_document(bot_id, with_summary=True), "meeting-summary.docx"
+            try:
+                saved.write_bytes(data)
+            except OSError:
+                pass
+    except NothingToSummarize:
+        raise HTTPException(404, "Nothing has been said in this meeting yet.") from None
+    except httpx.HTTPError as error:
+        raise HTTPException(502, f"The summary model didn't answer ({type(error).__name__}). Does Ollama have {_cfg.meeting.summary_model}?") from error
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @app.post("/api/bots/{bot_id}/leave")
@@ -432,6 +550,11 @@ async def attendee_bridge(ws: WebSocket) -> None:
             _bot_hub,
             _bot_controls,
             half_duplex=_cfg.vad.phrase_min_ms is None,  # phrase by phrase, people talk while it speaks
+            chat=_chat_captions,
+            hold_release_s=_cfg.meeting.hold_release_ms / 1000,
+            hold_max_s=_cfg.meeting.hold_max_s,
+            recorder=_recorder,
+            on_disconnect=_after_meeting,
         )
     finally:
         warm_up.cancel()

@@ -2,6 +2,7 @@
 ~4GB) into its volume, once - docker-compose.gpu.yml's asr-pull service runs
 this before the translator starts. Already there: returns in a second."""
 
+import os
 import sys
 import time
 
@@ -14,6 +15,22 @@ cfg = load_config().asr
 if cfg.provider != "cohere":
     sys.exit(0)
 c = cfg.cohere
+if os.path.isabs(c.model) or c.model.startswith("/"):
+    # A folder (the base Cohere model mounted from ./local-models). Already
+    # there: nothing to do. Missing: the gated base model, with HF_TOKEN.
+    if os.path.isfile(os.path.join(c.model, "config.json")):
+        print(f"{c.model}: already there", flush=True)
+        sys.exit(0)
+    try:
+        path = snapshot_download("CohereLabs/cohere-transcribe-03-2026", local_dir=c.model, allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt", "*.py"])
+        print(f"downloaded CohereLabs/cohere-transcribe-03-2026 to {path}", flush=True)
+        sys.exit(0)
+    except Exception as error:
+        sys.exit(
+            f"{c.model} is missing and CohereLabs/cohere-transcribe-03-2026 couldn't be downloaded ({type(error).__name__}). "
+            "Accept its terms on https://huggingface.co/CohereLabs/cohere-transcribe-03-2026, then either put its files in "
+            "local-models/cohere-transcribe-03-2026 or set HF_TOKEN to your Hugging Face token."
+        )
 jobs = [(c.model, c.revision, ["*.json", "*.safetensors", "*.model", "*.txt", "*.py"])]
 if c.processor:  # else the model's own repo already ships its processor
     # Only the processor files from this repo; its weights are the base model's.

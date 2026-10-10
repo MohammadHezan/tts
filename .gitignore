@@ -21,3 +21,9 @@ models/
 results/
 asr_test_clips/
 tts_clips/
+
+# Our own models, mounted into the containers (see local-models/README.md)
+local-models/
+
+# What was said in each meeting and its summary (private, on this PC)
+meeting-data/

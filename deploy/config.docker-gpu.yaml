@@ -37,25 +37,21 @@ vad:
   phrase_max_ms: 8000 # no pause by then: cut at the quietest moment
 
 asr:
-  # Cohere Transcribe Arabic, dialect fine-tune: on real Jordanian speech 26%
-  # word / 6.6% character errors vs 44% / 15% for Whisper large-v3-turbo, as
-  # good at English, faster. Each phrase is transcribed as Arabic and as
-  # English, and the one the model is surest of wins (99.3% right on short
-  # phrases). If it can't load, Whisper large-v3-turbo (below) takes over.
+  # Cohere Transcribe 03-2026 (the base model), on the GPU. Measured on the
+  # RTX 3060 against Whisper large-v3-turbo and the community dialect
+  # fine-tune with engine/test_asr_voices.py (36 clips, 12 voices, 11 sound
+  # conditions): word errors 14% vs 22% vs 21%; Arabic 11.9% vs 25.1% vs 24.2%;
+  # a phrase takes 0.45-0.75s. Each phrase is transcribed as Arabic and as
+  # English and the one the model is surest of wins. The model is gated
+  # (accept its terms on huggingface.co, download it once) and is mounted
+  # from ./local-models - see docker-compose.gpu.yml. If it can't load,
+  # Whisper large-v3-turbo (below) takes over.
   provider: cohere
   cohere:
-    model: oddadmix/cohere-transcribe-arabic-07-2026-dialectal-v2 # Apache-2.0
-    revision: e6a73c8baa7edcd43dd562110cabca40e79d8041
-    processor: Newmetrics/cohere-transcribe-arabic-07-2026 # Apache-2.0 copy of CohereLabs' (gated) repo
-    processor_revision: 35dbaf071fb0eec23ae1fdcbf671d469bc607e5c
-    cache_dir: /models/asr # the interpreter-asr volume, filled once by asr-pull
-    quantize: int8 # 2.4GB of video memory instead of 4.3GB, same accuracy
-    # Alternative: Cohere's multilingual base model (Apache-2.0, gated: accept the
-    # terms on its page, set HF_TOKEN). Not tested on Jordanian speech yet - run
-    # engine/test_asr_voices.py on both before switching:
-    #   model: CohereLabs/cohere-transcribe-03-2026
-    #   processor: null
-    #   trust_remote_code: true # loads it with AutoModelForSpeechSeq2Seq, as its model card says
+    model: /local-models/cohere-transcribe-03-2026
+    processor: null # the model's own folder has its processor
+    trust_remote_code: false # transformers 5 has the model built in
+    quantize: none # 4.3GB of video memory
   model: large-v3-turbo
   device: cuda
   compute_type: int8_float16
@@ -78,12 +74,12 @@ translator:
   glossary_path: glossary.yaml
   ollama:
     base_url: http://ollama:11434
-    # Gemma 3 4B (Q4_K_M, vision part removed - same text weights as Ollama's
-    # gemma3:4b): 2.5GB instead of the 12B's 7.1GB, so roughly 2.5x faster per
-    # sentence and ~4.5GB of video memory left over. Smaller models are weaker
-    # at Arabic; engine/test_translator_model.py measures speed and accuracy
-    # against the previous model (hf.co/unsloth/gemma-3-12b-it-GGUF:IQ4_XS).
-    model: hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M
+    # Gemma 3 4B text-only + our Arabic<->English LoRA (training/), merged,
+    # Q4_K_M, vocabulary cut to English+Arabic (deploy/prune_model.py): 2.0GB,
+    # about 115 tokens/s on the RTX 3060, 96% of the 44-case benchmark
+    # (engine/test_translator_model.py) against 93% for the same model without
+    # the LoRA. docker-compose.gpu.yml builds it from ./local-models.
+    model: gemma3-4b-lora-aggr
     num_ctx: 4096
     timeout_s: 60 # the first request also loads the model into video memory
   claude:
@@ -92,17 +88,17 @@ translator:
     max_tokens: 512
 
 tts:
-  # Microsoft's neural voices (online, no key) - natural Arabic and English at
-  # a conversational pace. The local voices below speak any sentence they
-  # can't deliver (no internet, service down).
-  provider: neural
+  # All local, nothing online to be refused or time out: English by Kokoro
+  # (0.7-1.2s a sentence), Arabic by Piper (Jordanian "kareem", 0.5-0.9s). In our
+  # read-back test both were as clear as Microsoft's online voices
+  # (engine/test_tts_models.py). To use Microsoft's online voices again:
+  # provider: neural, with tts.neural.voices (the local ones are then its fallback).
+  provider: multi_voice
   sample_rate_hz: 24000
   neural:
     voices:
-      en: en-US-AndrewNeural
-      ar: ar-LB-RamiNeural # Levantine; clear (0% errors read back), Jordanian Taim sounded Egyptian to users, Syrian voices were less clear
-    rates: # relative to the voice's own pace: "-10%" slower, "+10%" faster
-      en: "-10%"
+      ar: ar-LB-RamiNeural
+    rates:
       ar: "-5%"
     timeout_s: 6.0
   kokoro:
@@ -114,7 +110,17 @@ tts:
   piper:
     model_path: /models/ar_JO-kareem-medium.onnx
     config_path: null
-    length_scale: 1.05
+    length_scale: 0.8 # measured 1.20x faster than the old 1.05 (a duration multiplier: smaller = faster)
+
+meeting:
+  record_dir: /srv/meetings # the sentences of each meeting, saved on this PC (the meeting-data folder)
+  utc_offset_minutes: 180 # times in the summary document: Jordan
+  # What the bot does in each meeting until the dashboard buttons change it.
+  voice: true # speak the translations; off = no voice is synthesized at all
+  chat_text: both # typed in the meeting chat: what was said, then its translation (off | translation | both)
+  hold_voice: true # the voice is made while someone talks and spoken once they stop
+  hold_release_ms: 300 # quiet this long after the last word before it speaks
+  hold_max_s: 30 # someone who talks on this long without a real pause is interpreted anyway
 
 logging:
   level: INFO

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meeting Interpreter - Log in</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+<style>
+  main { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
+  form { display: flex; flex-direction: column; gap: 10px; background: var(--surface); padding: 22px; border-radius: 12px; }
+  label { font-size: 14px; color: var(--muted); }
+  input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid #3a3a3f;
+          background: var(--surface-2); color: var(--text); font-size: 15px; }
+  #error { color: var(--error); min-height: 1.3em; font-size: 14px; margin: 0; }
+</style>
+</head>
+<body>
+<header class="topbar"><h1>Meeting Interpreter</h1></header>
+<main>
+  <form id="form" autocomplete="on">
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <p id="error" role="alert"></p>
+    <button id="submit" type="submit">Log in</button>
+  </form>
+</main>
+<script>
+  const form = document.getElementById('form');
+  const errorEl = document.getElementById('error');
+  const submit = document.getElementById('submit');
+  const next = new URLSearchParams(window.location.search).get('next') || '/bot.html';
+  // Only to a page on this site: never another address.
+  const target = next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/bot.html';
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorEl.textContent = '';
+    submit.disabled = true;
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: form.username.value, password: form.password.value }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        window.location.href = target;
+        return;
+      }
+      errorEl.textContent = data.detail || 'Could not log in.';
+      form.password.value = '';
+    } catch (err) {
+      errorEl.textContent = 'Could not reach the interpreter.';
+    } finally {
+      submit.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

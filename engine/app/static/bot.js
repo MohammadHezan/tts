@@ -1,14 +1,23 @@
 // Meeting-bot dashboard: sends an Attendee bot into a Zoom/Meet call via our
 // /api/bots endpoints (the Attendee API key never reaches the browser), then
-// shows what the bot heard and what it said, live. Everything rendered from
-// the meeting goes through textContent - never innerHTML - since it's
-// whatever anyone in the call happened to say.
+// controls it (voice, chat text, pause). What the bot hears and says is shown
+// only in the meeting's own chat, never on this page.
 
 const meetingUrlInput = document.getElementById('meeting-url');
 const botNameInput = document.getElementById('bot-name');
 const sendBtn = document.getElementById('send-bot');
 const removeBtn = document.getElementById('remove-bot');
 const muteBtn = document.getElementById('mute-bot');
+// Typed translations in the meeting chat, and a pause for private asides.
+const textBtn = document.getElementById('text-bot');
+const heardBtn = document.getElementById('heard-bot');
+const pauseBtn = document.getElementById('pause-bot');
+const holdBtn = document.getElementById('hold-bot');
+const logoutBtn = document.getElementById('logout');
+const summaryBtn = document.getElementById('summary-bot');
+const LAST_MEETING_KEY = 'interpreter.lastMeeting';
+let lastMeeting = null;
+const switchBtns = [textBtn, heardBtn, holdBtn, pauseBtn];
 // One language at a time: the meeting mixes the bot's voice for everyone, so
 // each side turns off the language it doesn't need (the other still hears theirs).
 const languageBtns = [document.getElementById('mute-ar'), document.getElementById('mute-en')];
@@ -16,7 +25,6 @@ const LANGUAGE_NAMES = { ar: 'Arabic', en: 'English' };
 const statusEl = document.getElementById('status');
 const hintEl = document.getElementById('bot-hint');
 const warningsEl = document.getElementById('warnings');
-const turnsEl = document.getElementById('turns');
 const readinessEl = document.getElementById('readiness');
 const phoneHintEl = document.getElementById('phone-hint');
 
@@ -35,10 +43,22 @@ const STATE_HINTS = {
 let botId = null;
 let botMuted = false;
 let mutedLanguages = [];
+let textMode = 'translation';
+let botPaused = false;
+let holdVoice = true;
 let hintedState = null;
-let eventsSocket = null;
 let pollTimer = null;
-const turnEls = new Map();
+
+// The last meeting stays downloadable after the bot has left it.
+function rememberMeeting(id) {
+  lastMeeting = id;
+  summaryBtn.hidden = false;
+  try {
+    localStorage.setItem(LAST_MEETING_KEY, id);
+  } catch (_) {
+    // Blocked storage: the document just isn't offered after a refresh.
+  }
+}
 
 function remember(id) {
   try {
@@ -61,11 +81,22 @@ function showMuted(muted, languages = []) {
   botMuted = muted;
   mutedLanguages = languages;
   // Muted: the bot stops speaking in the meeting; its captions keep coming here.
-  muteBtn.textContent = muted ? 'Unmute interpreter' : 'Mute interpreter';
+  muteBtn.textContent = muted ? 'Voice (TTS): off' : 'Voice (TTS): on';
   for (const btn of languageBtns) {
     const off = languages.includes(btn.dataset.lang);
     btn.textContent = `${LANGUAGE_NAMES[btn.dataset.lang]} voice: ${off ? 'off' : 'on'}`;
   }
+}
+
+function showSwitches(state) {
+  textMode = state.text_mode || 'translation';
+  botPaused = Boolean(state.paused);
+  holdVoice = state.hold !== false;
+  holdBtn.textContent = `Speak when I stop: ${holdVoice ? 'on' : 'off'}`;
+  textBtn.textContent = `Chat text: ${textMode === 'off' ? 'off' : 'on'}`;
+  heardBtn.textContent = `Also type what was heard: ${textMode === 'both' ? 'on' : 'off'}`;
+  heardBtn.disabled = textMode === 'off';
+  pauseBtn.textContent = botPaused ? 'Resume interpreter' : 'Pause interpreter';
 }
 
 function setStatus(text, kind) {
@@ -95,6 +126,10 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    window.location.href = `/login.html?next=${encodeURIComponent(window.location.pathname)}`;
+    throw new Error('Log in first.');
+  }
   if (!response.ok) {
     throw new Error(data.detail || `${response.status} ${response.statusText}`);
   }
@@ -174,47 +209,6 @@ async function loadConfig() {
   }
 }
 
-function turnEl(turnId) {
-  let el = turnEls.get(turnId);
-  if (!el) {
-    el = document.createElement('div');
-    el.className = 'turn';
-    turnEls.set(turnId, el);
-    turnsEl.prepend(el);
-  }
-  return el;
-}
-
-function appendLine(el, tagClass, tagText, lineClass, text) {
-  const tag = document.createElement('span');
-  tag.className = tagClass;
-  tag.textContent = tagText;
-  const line = document.createElement('p');
-  line.className = lineClass;
-  line.textContent = text;
-  el.append(tag, line);
-}
-
-function onPipelineEvent(event) {
-  if (event.type === 'final' && event.text) {
-    appendLine(turnEl(event.turn_id), 'heard-tag', `Heard (${event.lang})`, 'source', event.text);
-  } else if (event.type === 'translation' && event.text) {
-    appendLine(turnEl(event.turn_id), 'said-tag', `Bot said (${event.lang})`, 'translation', event.text);
-  } else if (event.type === 'error') {
-    // One sentence failed (e.g. a translation timeout); the bot carries on.
-    appendLine(turnEl(event.turn_id), 'error-tag', 'Could not interpret this', 'error-text', event.error || 'unknown error');
-  }
-}
-
-function openEvents(id) {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  eventsSocket = new WebSocket(`${proto}//${window.location.host}/api/bots/${encodeURIComponent(id)}/events`);
-  eventsSocket.onmessage = (msg) => onPipelineEvent(JSON.parse(msg.data));
-  eventsSocket.onclose = () => {
-    eventsSocket = null;
-  };
-}
-
 async function pollState() {
   if (!botId) return;
   try {
@@ -229,7 +223,8 @@ async function pollState() {
       return;
     }
     showMuted(Boolean(bot.muted), bot.muted_languages || []);
-    setStatus(`Bot: ${state}${bot.muted ? ' (muted)' : ''}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
+    showSwitches(bot);
+    setStatus(`Bot: ${state}${bot.paused ? ' (paused)' : bot.muted ? ' (voice off)' : ''}`, FINISHED_STATES.has(state) ? 'disconnected' : 'connected');
     if (state !== hintedState && STATE_HINTS[state]) {
       hintEl.textContent = [STATE_HINTS[state], bot.problem].filter(Boolean).join(' ');
       hintedState = state;
@@ -243,13 +238,14 @@ async function pollState() {
 
 function track(id) {
   botId = id;
+  rememberMeeting(id);
   hintedState = null;
   remember(id);
   removeBtn.hidden = false;
   muteBtn.hidden = false;
   for (const btn of languageBtns) btn.hidden = false;
+  for (const btn of switchBtns) btn.hidden = false;
   sendBtn.disabled = true;
-  openEvents(id);
   pollState();
   pollTimer = setInterval(pollState, 3000);
 }
@@ -257,13 +253,14 @@ function track(id) {
 function stopTracking() {
   clearInterval(pollTimer);
   pollTimer = null;
-  if (eventsSocket) eventsSocket.close();
   botId = null;
   remember(null);
   removeBtn.hidden = true;
   muteBtn.hidden = true;
   for (const btn of languageBtns) btn.hidden = true;
+  for (const btn of switchBtns) btn.hidden = true;
   showMuted(false);
+  showSwitches({});
   sendBtn.disabled = !meetingServiceReady;
 }
 
@@ -296,8 +293,8 @@ muteBtn.addEventListener('click', async () => {
     const result = await api('POST', `/api/bots/${encodeURIComponent(botId)}/mute`, { muted: !botMuted });
     showMuted(result.muted, result.muted_languages || []);
     hintEl.textContent = result.muted
-      ? 'Muted: the interpreter stays in the meeting but stops speaking. Translations still appear here. Anyone in the call can type "unmute" in the meeting chat to bring it back.'
-      : 'Unmuted: the interpreter speaks its translations in the meeting again. Anyone in the call can type "mute" in the meeting chat to silence it.';
+      ? 'Voice off: the interpreter stays in the meeting but does not speak (and no voice is generated). Translations still appear in the meeting chat.'
+      : 'Voice on: the interpreter speaks its translations in the meeting again.';
   } catch (err) {
     hintEl.textContent = err.message;
   }
@@ -313,13 +310,59 @@ for (const btn of languageBtns) {
       showMuted(result.muted, result.muted_languages || []);
       const other = LANGUAGE_NAMES[lang === 'ar' ? 'en' : 'ar'];
       hintEl.textContent = muted
-        ? `${LANGUAGE_NAMES[lang]} voice off: the interpreter stops speaking ${LANGUAGE_NAMES[lang]} but keeps speaking ${other}. In the meeting chat anyone can type "unmute ${LANGUAGE_NAMES[lang].toLowerCase()}".`
+        ? `${LANGUAGE_NAMES[lang]} voice off: the interpreter stops speaking ${LANGUAGE_NAMES[lang]} but keeps speaking ${other}.`
         : `${LANGUAGE_NAMES[lang]} voice back on.`;
     } catch (err) {
       hintEl.textContent = err.message;
     }
   });
 }
+
+async function sendSwitch(feature, value, hint) {
+  if (!botId) return;
+  try {
+    const result = await api('POST', `/api/bots/${encodeURIComponent(botId)}/switch`, { feature, value });
+    showMuted(Boolean(result.muted), result.muted_languages || []);
+    showSwitches(result);
+    hintEl.textContent = hint;
+  } catch (err) {
+    hintEl.textContent = err.message;
+  }
+}
+
+textBtn.addEventListener('click', () => {
+  const on = textMode === 'off';
+  sendSwitch(
+    'text', on ? 'on' : 'off',
+    on ? 'Chat text on: each phrase is typed in the meeting chat as soon as it is ready.'
+       : 'Chat text off: nothing is typed in the meeting chat.',
+  );
+});
+
+heardBtn.addEventListener('click', () => {
+  const both = textMode === 'both';
+  sendSwitch(
+    'text', both ? 'on' : 'both',
+    both ? 'The meeting chat shows the translation only.' : 'The meeting chat shows what was said, then its translation.',
+  );
+});
+
+holdBtn.addEventListener('click', () => {
+  sendSwitch(
+    'hold', holdVoice ? 'off' : 'on',
+    holdVoice ? 'The voice speaks as soon as it is ready, even while someone is still talking.'
+              : 'The voice is made while someone talks, and speaks once they stop.',
+  );
+});
+
+pauseBtn.addEventListener('click', () => {
+  const resume = botPaused;
+  sendSwitch(
+    'interpreter', resume ? 'resume' : 'pause',
+    resume ? 'Resumed: the interpreter is listening again.'
+           : 'Paused: the interpreter hears nothing and translates nothing until you resume.',
+  );
+});
 
 removeBtn.addEventListener('click', async () => {
   if (!botId) return;
@@ -330,6 +373,48 @@ removeBtn.addEventListener('click', async () => {
     hintEl.textContent = err.message;
   }
 });
+
+summaryBtn.addEventListener('click', async () => {
+  if (!lastMeeting) return;
+  summaryBtn.disabled = true;
+  hintEl.textContent = 'Getting the meeting document...';
+  try {
+    const response = await fetch(`/api/bots/${encodeURIComponent(lastMeeting)}/summary.docx`);
+    if (response.status === 401) {
+      window.location.href = `/login.html?next=${encodeURIComponent(window.location.pathname)}`;
+      return;
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || `${response.status} ${response.statusText}`);
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = (response.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'meeting-summary.docx';
+    link.click();
+    URL.revokeObjectURL(link.href);
+    hintEl.textContent = 'Downloaded. During a meeting it lists the sentences only; the summaries are written automatically once the meeting has ended (and kept in the meeting-data folder).';
+  } catch (err) {
+    hintEl.textContent = err.message;
+  } finally {
+    summaryBtn.disabled = false;
+  }
+});
+
+logoutBtn.addEventListener('click', async () => {
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+  } finally {
+    window.location.href = '/login.html';
+  }
+});
+
+try {
+  const earlier = localStorage.getItem(LAST_MEETING_KEY);
+  if (earlier) rememberMeeting(earlier);
+} catch (_) {
+  // Blocked storage.
+}
 
 loadConfig();
 const previous = recall();

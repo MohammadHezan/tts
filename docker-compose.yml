@@ -54,9 +54,12 @@ services:
       TLS_KEY_FILE: /setup/translator.key
       INTERPRETER_PHONE_URL: ${INTERPRETER_PHONE_URL:-} # set by the start scripts
       INTERPRETER_GPU_STATUS: ${INTERPRETER_GPU_STATUS:-} # the start scripts' graphics-card check, for the page
+      INTERPRETER_ADMIN_USER: ${INTERPRETER_ADMIN_USER:-admin} # the dashboard login; set both in the .env file (deploy/set_admin.py)
+      INTERPRETER_ADMIN_PASSWORD_HASH: ${INTERPRETER_ADMIN_PASSWORD_HASH:-}
       INTERPRETER_PRELOAD_ASR: "1" # load Whisper at start: the first bot joins faster, and the page knows CPU vs GPU
     volumes:
       - interpreter-setup:/setup:ro
+      - ./meeting-data:/srv/meetings # what was said in each meeting, and its summary document, on this PC
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
       interval: 10s

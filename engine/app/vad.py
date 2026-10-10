@@ -105,6 +105,12 @@ class SpeechEndpointer:
         self._trim_history()
         return events
 
+    @property
+    def is_speaking(self) -> bool:
+        """Someone is talking right now: from the start of speech until the
+        pause that ends it (a short pause inside a sentence doesn't count)."""
+        return self._triggered
+
     def current_utterance_audio(self) -> np.ndarray | None:
         """Audio accumulated so far for an in-progress (not yet ended) utterance.
 

@@ -33,6 +33,7 @@ services:
       ENGINE_CONFIG_PATH: /srv/tts/deploy/config.docker-gpu.yaml
     volumes:
       - interpreter-asr:/models/asr
+      - ./local-models:/local-models:ro # the speech model (see local-models/README.md)
     depends_on:
       asr-pull:
         condition: service_completed_successfully
@@ -45,6 +46,7 @@ services:
     command: ["python", "/srv/tts/deploy/download_asr.py"]
     volumes:
       - interpreter-asr:/models/asr
+      - ./local-models:/local-models # filled here only if the speech model isn't there yet
     restart: "no"
 
   ollama:
@@ -56,7 +58,23 @@ services:
       OLLAMA_KV_CACHE_TYPE: q8_0
 
   ollama-pull:
-    entrypoint: ["ollama", "pull", "hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M"]
+    # The translation model the config names (gemma3-4b-lora-aggr): built from
+    # ./local-models/Modelfile when that exists (our Arabic<->English LoRA,
+    # vocabulary-pruned), else the plain Gemma 3 4B downloaded under that name.
+    volumes:
+      - ./local-models:/local-models:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        # The plain model writes the meeting summaries (meeting.summary_model): the
+        # translation model can't - its training made it answer in one short sentence.
+        ollama pull hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M || exit 1
+        if [ -f /local-models/Modelfile ]; then
+          ollama create gemma3-4b-lora-aggr -f /local-models/Modelfile
+        else
+          ollama cp hf.co/innerloop-dev/gemma3-4b-text:Q4_K_M gemma3-4b-lora-aggr
+        fi
 
 volumes:
   interpreter-asr:
