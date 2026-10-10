@@ -198,6 +198,7 @@ jobs:
           git archive --format=tar --prefix=Interpreter/app/ HEAD -- . ':!android' ':!.github' | tar -x -C win
           mv "win/Interpreter/app/Start Interpreter.bat" "win/Interpreter/app/Stop Interpreter.bat" win/Interpreter/
           cp deploy/README-Windows.txt win/Interpreter/README.txt
+          sed 's/$/\r/' deploy/qa_collect_logs.bat > "win/Interpreter/Collect Logs.bat"  # CRLF: cmd.exe
           (cd win && zip -qr ../Interpreter-Windows.zip Interpreter)
           unzip -l Interpreter-Windows.zip | awk 'NR > 3 && $4 !~ /\/app\/./ {print $4}'
       - name: Publish to the pc-latest pre-release

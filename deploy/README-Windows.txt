@@ -5,7 +5,9 @@ An AI interpreter that joins your Google Meet / Teams call as its own
 participant and speaks each sentence in the other language
 (English <-> Arabic), so everyone in the call hears it.
 
-NEEDS: Windows 10/11, 16 GB of memory, about 20 GB of free disk space.
+NEEDS: Windows 10/11, 16 GB of memory, about 50 GB of free disk space, internet,
+       and - for the full accuracy - an NVIDIA graphics card with 12 GB (an RTX 3060
+       was tested). Close games and video editors first: they use the card.
 
 
 1. DOCKER DESKTOP (once)
@@ -29,25 +31,36 @@ NEEDS: Windows 10/11, 16 GB of memory, about 20 GB of free disk space.
      (or "More info" -> "Run anyway").
    - It may ask two questions: answer Y to both (more memory for Docker,
      and letting your phone reach this PC).
-   - The first start downloads about 15 GB and can take 20-40 minutes.
-     Leave the window open. After that it starts in about a minute.
-   - When it's ready, your browser opens the interpreter page.
+   - FIRST TIME ONLY, it asks you to choose a dashboard username and
+     password (at least 8 characters). Only you can send the bot into a
+     meeting with them. Only a scrambled hash is saved (the .env file in
+     "app"); to change it, delete that file and start again.
+   - The first start downloads the programs (about 15 GB) and the models
+     (about 6 GB, checked and unpacked by itself; if interrupted, start again
+     and it continues). Allow 30-60 minutes. Leave the window open. After
+     that it starts in about a minute.
+   - When it's ready, your browser opens the login page.
 
 
 3. USE IT
    1. Start a Google Meet (meet.google.com -> New meeting -> Start an
       instant meeting) and copy its link. Teams links work too. Zoom links
       don't yet: Zoom only lets bots in through a Zoom developer app.
-   2. On your phone: Interpreter app -> Meeting Bot. It finds this PC by
-      itself (same Wi-Fi). Paste the link, tap "Send interpreter into
-      meeting". (Or paste it on the page that opened on this PC.)
+   2. Log in, paste the link on the page, press "Send interpreter into
+      meeting".
    3. In Meet, let "AI Interpreter" in.
-   4. Talk normally. The interpreter says it in the other language phrase
-      by phrase (about every 10 words), even while you carry on - a few
-      seconds behind with an NVIDIA graphics card, 10-15 seconds without.
-   5. To silence it: tap Mute, or anyone types "mute" in the meeting chat
-      ("unmute" to hear it again; Arabic: "اسكت" / "تكلم").
+   4. Talk normally. Each phrase appears in the MEETING CHAT as
+      "[EN] what was said" then "[AR] its translation", and the bot speaks
+      the translation once you stop talking. (The dashboard itself shows
+      no text.)
+   5. The dashboard buttons switch the voice (and each language's voice),
+      the typed chat text, and pause the interpreter. Nothing can be
+      switched from the meeting itself.
+   6. When the meeting ends, a Word file with the notes of the meeting and
+      each speaker's summary and sentences is written to
+      app\meeting-data (and the "Download meeting document" button gives it).
    Two phones in one room? Use earbuds, or they hear each other.
+   Something wrong? Double-click "Collect Logs" and send the logs.txt it writes.
 
 
 STOP:  double-click  "Stop Interpreter"

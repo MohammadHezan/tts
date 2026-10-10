@@ -148,11 +148,90 @@ if ($adapter) {
 }
 if ($ip) { $Env:INTERPRETER_PHONE_URL = "http://${ip}:$Port" }
 
+# 4b. The dashboard login. It lives in .env (kept out of the download and out of git):
+#     asked for once, and only a salted hash of the password is stored.
+function NewPasswordHash([string]$Password) {
+    $salt = New-Object byte[] 16
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($salt)
+    $rng.Dispose()
+    $kdf = New-Object Security.Cryptography.Rfc2898DeriveBytes($Password, $salt, 600000, [Security.Cryptography.HashAlgorithmName]::SHA256)
+    $hash = $kdf.GetBytes(32)
+    $kdf.Dispose()
+    return 'pbkdf2_sha256:600000:' + [Convert]::ToBase64String($salt) + ':' + [Convert]::ToBase64String($hash)
+}
+function PlainText([Security.SecureString]$Secret) {
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+$envFile = Join-Path (Get-Location) '.env'
+$haveLogin = (Test-Path $envFile) -and (Select-String -Path $envFile -Pattern '^\s*INTERPRETER_ADMIN_PASSWORD_HASH=.+' -Quiet)
+if (-not $haveLogin) {
+    Say 'The dashboard needs a login, so that only you can send the bot into a meeting.'
+    $user = (Read-Host 'Choose a username [admin]').Trim() -replace "'", ''
+    if (-not $user) { $user = 'admin' }
+    while ($true) {
+        $first = PlainText (Read-Host 'Choose a password (at least 8 characters)' -AsSecureString)
+        $again = PlainText (Read-Host 'Type it again' -AsSecureString)
+        if ($first.Length -ge 8 -and $first -ceq $again) { break }
+        Say 'The two must match and be at least 8 characters. Try again.'
+    }
+    $kept = @()
+    if (Test-Path $envFile) { $kept = @(Get-Content $envFile | Where-Object { $_ -notmatch '^\s*INTERPRETER_ADMIN_(USER|PASSWORD_HASH)=' }) }
+    $lines = $kept + "INTERPRETER_ADMIN_USER='$user'" + ("INTERPRETER_ADMIN_PASSWORD_HASH='" + (NewPasswordHash $first) + "'")
+    [IO.File]::WriteAllText($envFile, (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
+    Say "Login saved (username: $user). To change it later, delete the .env file and start again."
+}
+
+# 4c. Our models (about 6 GB: the speech model and our trained translation model) are not in the
+#     download itself. Fetched once from the GitHub release named in deploy\models.json, each part checked
+#     against its checksum; an interrupted download resumes. Without them the interpreter still runs, with
+#     Whisper for speech and the plain translation model (less accurate in Arabic).
+$manifestFile = Join-Path (Get-Location) 'deploy\models.json'
+$modelsDir = Join-Path (Get-Location) 'local-models'
+if (-not $Env:INTERPRETER_SKIP_MODELS -and -not (Test-Path (Join-Path $modelsDir 'Modelfile')) -and (Test-Path $manifestFile)) {
+    try {
+        $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
+        $gb = [math]::Round($manifest.total_bytes / 1GB, 1)
+        Say "Downloading the interpreter's models ($gb GB). This happens once; if it is interrupted, start again and it continues."
+        $tmp = Join-Path (Get-Location) 'models-download'
+        New-Item -ItemType Directory -Force $tmp | Out-Null
+        $joined = Join-Path $tmp 'local-models.zip'
+        if (Test-Path $joined) { Remove-Item $joined -Force }
+        $out = [IO.File]::Create($joined)
+        try {
+            foreach ($part in $manifest.parts) {
+                $file = Join-Path $tmp $part.name
+                $good = { (Test-Path $file) -and ((Get-Item $file).Length -eq $part.bytes) -and ((Get-FileHash $file -Algorithm SHA256).Hash -eq $part.sha256.ToUpper()) }
+                for ($attempt = 1; $attempt -le 5 -and -not (& $good); $attempt++) {
+                    Say "  $($part.name) (attempt $attempt)"
+                    & "$Env:SystemRoot\System32\curl.exe" -L -C - --fail --retry 3 --retry-delay 5 -o $file "$($manifest.release)/$($part.name)"
+                    if (-not (& $good) -and (Test-Path $file) -and ((Get-Item $file).Length -ge $part.bytes)) { Remove-Item $file -Force }  # whole but wrong: start this part over
+                }
+                if (-not (& $good)) { throw "$($part.name) could not be downloaded intact" }
+                $in = [IO.File]::OpenRead($file)
+                try { $in.CopyTo($out) } finally { $in.Dispose() }
+                Remove-Item $file -Force  # the part is in the joined file now: keeps the disk use down
+            }
+        } finally { $out.Dispose() }
+        Say 'Unpacking the models...'
+        New-Item -ItemType Directory -Force $modelsDir | Out-Null
+        & "$Env:SystemRoot\System32\tar.exe" -xf $joined -C $modelsDir
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $modelsDir 'Modelfile'))) { throw 'unpacking the models failed' }
+        Remove-Item $tmp -Recurse -Force
+        Say 'Models ready.'
+    } catch {
+        Say "Could not get the models: $($_.Exception.Message)"
+        Say 'Continuing without them (Whisper for speech, the plain translation model). Start again later to retry.'
+        if (Test-Path $modelsDir) { if (-not (Test-Path (Join-Path $modelsDir 'Modelfile'))) { Remove-Item $modelsDir -Recurse -Force -ErrorAction SilentlyContinue } }
+    }
+}
+
 # 5. Download (first time ~15 GB) and start
 Say 'Getting the interpreter ready. The first time this downloads about 15 GB.'
 & docker compose pull --ignore-pull-failures
-if (Test-Path (Join-Path (Get-Location) 'local-models')) {
-    # Our own build (the meeting-chat captions and the dashboard switches live in this folder's code).
+if ((Test-Path (Join-Path (Get-Location) 'local-models')) -and (Test-Path (Join-Path (Get-Location) '.git'))) {
+    # A developer's checkout: our own build (the meeting-chat captions and the dashboard switches live in this folder's code).
     Say 'Building the translator from this folder (the first time takes a few minutes)...'
     & docker compose build translator
     if ($LASTEXITCODE -ne 0) { Say 'Building failed - see the messages above.'; exit 1 }

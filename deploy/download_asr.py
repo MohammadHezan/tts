@@ -26,11 +26,16 @@ if os.path.isabs(c.model) or c.model.startswith("/"):
         print(f"downloaded CohereLabs/cohere-transcribe-03-2026 to {path}", flush=True)
         sys.exit(0)
     except Exception as error:
-        sys.exit(
-            f"{c.model} is missing and CohereLabs/cohere-transcribe-03-2026 couldn't be downloaded ({type(error).__name__}). "
-            "Accept its terms on https://huggingface.co/CohereLabs/cohere-transcribe-03-2026, then either put its files in "
-            "local-models/cohere-transcribe-03-2026 or set HF_TOKEN to your Hugging Face token."
+        # Not fatal: the engine then falls back to Whisper large-v3-turbo (less accurate in Arabic), so the
+        # interpreter still starts. The dashboard says which speech model is in use.
+        print(
+            f"WARNING: {c.model} is missing and CohereLabs/cohere-transcribe-03-2026 couldn't be downloaded "
+            f"({type(error).__name__}). The interpreter will use Whisper instead. For the better speech model: accept its terms on "
+            "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026, then either put its files in "
+            "local-models/cohere-transcribe-03-2026 or set HF_TOKEN to your Hugging Face token.",
+            flush=True,
         )
+        sys.exit(0)
 jobs = [(c.model, c.revision, ["*.json", "*.safetensors", "*.model", "*.txt", "*.py"])]
 if c.processor:  # else the model's own repo already ships its processor
     # Only the processor files from this repo; its weights are the base model's.

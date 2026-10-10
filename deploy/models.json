@@ -1,0 +1,27 @@
+{
+  "release": "https://github.com/MohammadHezan/tts/releases/download/qa-models",
+  "parts": [
+    {
+      "name": "local-models.zip.001",
+      "bytes": 1900000000,
+      "sha256": "09e717627440e387de688c30fe5138db8209b182c0f9119dc8a256060a85ef89"
+    },
+    {
+      "name": "local-models.zip.002",
+      "bytes": 1900000000,
+      "sha256": "262403247a3a93d83e3f0e7988e485e94b7e475bd9861c5b133c7ce4ef59a92d"
+    },
+    {
+      "name": "local-models.zip.003",
+      "bytes": 1900000000,
+      "sha256": "938dddae884e4043d78552c8cea0d30a547ed640030023a850c2daf4a5bfb2b7"
+    },
+    {
+      "name": "local-models.zip.004",
+      "bytes": 482056653,
+      "sha256": "c88f06e67c300e40706f207dcac0a9e5d3a5291659ed88cf2c8dd79c2c8c6df9"
+    }
+  ],
+  "total_bytes": 6182056653,
+  "sha256_all": "a63440ded1929d538b2fd0ae886e78d7eb765372cd546f6219c59fef9f153682"
+}
